@@ -66,3 +66,5 @@ img.cover.large.wide { width: 18rem; height: 10.1rem; }
 .hero { display: flex; gap: 1.25rem; align-items: flex-start; margin-bottom: 1rem; }
 .hero > div { min-width: 0; flex: 1; }
 @media (max-width: 40rem) { .hero { flex-direction: column; } img.cover.large { width: 8rem; height: 12rem; } }
+form.search { margin-bottom: 1.25rem; }
+img.cover.large { margin-top: .75rem; }
