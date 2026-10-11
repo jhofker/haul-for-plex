@@ -161,6 +161,32 @@ pub struct Media {
     pub parts: Vec<Part>,
 }
 
+impl Media {
+    /// Resolution as users write it: `4K`, `1080p`, `720p`, `SD`, or the raw value.
+    pub fn resolution_label(&self) -> Option<String> {
+        let r = self.video_resolution.as_deref()?;
+        Some(match r.to_ascii_lowercase().as_str() {
+            "4k" => "4K".to_string(),
+            "sd" => "SD".to_string(),
+            d if d.chars().all(|c| c.is_ascii_digit()) => format!("{d}p"),
+            other => other.to_string(),
+        })
+    }
+
+    /// Short description for choosing between versions, e.g. `1080p h264 mkv`.
+    pub fn summary(&self) -> String {
+        let mut bits = Vec::new();
+        bits.extend(self.resolution_label());
+        bits.extend(self.video_codec.clone());
+        bits.extend(self.container.clone());
+        if bits.is_empty() {
+            "unknown".into()
+        } else {
+            bits.join(" ")
+        }
+    }
+}
+
 /// One file of a media version; multi-part movies have several.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

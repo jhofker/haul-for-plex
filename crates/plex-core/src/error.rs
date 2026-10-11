@@ -43,6 +43,13 @@ pub enum Error {
         attempts: Vec<(String, String)>,
     },
 
+    #[error("{title:?} has no version matching {wanted}; available: {}", .available.join(", "))]
+    NoSuchVersion {
+        title: String,
+        wanted: String,
+        available: Vec<String>,
+    },
+
     #[error("no server matches {0:?}; run `plex-grabber servers` to list them")]
     ServerNotFound(String),
 

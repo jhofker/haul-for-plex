@@ -31,6 +31,7 @@ $ plex-grabber ls "Home" movies            # a library, or any item key
 $ plex-grabber search "blade runner"       # across all your servers
 $ plex-grabber download "Home" 84521       # a movie, episode, season or show key
 $ plex-grabber download "Home" 100583 --parallel 4 --dry-run
+$ plex-grabber download "Home" 84521 --version 4k   # pick a version
 ```
 
 Add `--json` to any command for machine-readable output. Keys come from `ls`
@@ -103,7 +104,13 @@ The config file holds your Plex token and is only readable by its owner.
 - A server owner can disable downloads for people they share with. Those
   servers refuse the download and plex-grabber reports it; it does not try to
   work around the setting.
-- When an item has several versions (for example 1080p and 4K), the first is used.
+- When an item has several versions (for example 1080p and 4K), the first is
+  used unless you choose: `--version 2` (numbered as in `ls`) or
+  `--version 4k` / `1080p` / `720p` / `sd`. For a season or show, episodes that
+  lack the requested version use their first one. Versions other than the first
+  are saved as `Movie (2023) - 4K.mkv` so both can sit side by side. In the web
+  interface a movie or episode with several versions has a download button per
+  version, and seasons and shows have a version picker.
 
 ## Development
 

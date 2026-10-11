@@ -8,7 +8,7 @@ use reqwest::header::{ACCEPT, CONTENT_RANGE, RANGE};
 use tokio::io::AsyncWriteExt;
 
 use crate::error::{Error, Result};
-use crate::library::{Metadata, Part};
+use crate::library::{Media, Metadata, Part};
 use crate::naming::{self, Episode};
 use crate::server::ServerClient;
 
@@ -17,6 +17,104 @@ use crate::server::ServerClient;
 pub struct Layout {
     pub movies_dir: PathBuf,
     pub tv_dir: PathBuf,
+}
+
+/// Which version of an item to download when it has several (e.g. 1080p and 4K).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum VersionChoice {
+    /// The first version the server lists.
+    #[default]
+    First,
+    /// The Nth version (1-based), as numbered by `ls`.
+    Index(usize),
+    /// A resolution: `4k`, `1080`, `720`, `480`, `sd`.
+    Resolution(String),
+}
+
+impl std::str::FromStr for VersionChoice {
+    type Err = String;
+
+    /// `first`, a number up to 99 (the Nth version), or a resolution such as
+    /// `4k`, `2160`, `1080p`, `720`, `sd`.
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        let s = s.trim().to_ascii_lowercase();
+        if s.is_empty() || s == "first" || s == "default" {
+            return Ok(Self::First);
+        }
+        if s.len() <= 2 && s.chars().all(|c| c.is_ascii_digit()) {
+            return match s.parse::<usize>() {
+                Ok(n) if n >= 1 => Ok(Self::Index(n)),
+                _ => Err("version numbers start at 1".into()),
+            };
+        }
+        let res = match s.trim_end_matches('p') {
+            "4k" | "2160" | "uhd" => "4k".to_string(),
+            "sd" | "480" | "576" => s.trim_end_matches('p').to_string(),
+            r if r.len() >= 3 && r.chars().all(|c| c.is_ascii_digit()) => r.to_string(),
+            _ => {
+                return Err(format!(
+                    "{s:?} is not a version; use a number like 2, or a resolution like 4k, 1080p, 720p"
+                ));
+            }
+        };
+        Ok(Self::Resolution(res))
+    }
+}
+
+impl std::fmt::Display for VersionChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::First => write!(f, "first"),
+            Self::Index(n) => write!(f, "{n}"),
+            Self::Resolution(r) => write!(f, "{r}"),
+        }
+    }
+}
+
+/// Normalises Plex's `videoResolution` for comparison with a `Resolution` choice.
+fn normalize_resolution(r: &str) -> String {
+    match r.to_ascii_lowercase().trim_end_matches('p') {
+        "4k" | "2160" => "4k".into(),
+        other => other.to_string(),
+    }
+}
+
+impl VersionChoice {
+    /// Index into `item.media` of the version to use. With `strict`, a choice
+    /// the item can't satisfy is an error; otherwise (episodes of a season or
+    /// show) the first version is used instead.
+    fn pick(&self, item: &Metadata, strict: bool) -> Result<usize> {
+        let usable = |m: &Media| !m.parts.is_empty();
+        let first = item
+            .media
+            .iter()
+            .position(usable)
+            .ok_or_else(|| Error::NoMedia(item.title.clone()))?;
+        let found = match self {
+            Self::First => Some(first),
+            Self::Index(n) => item.media.get(n - 1).filter(|m| usable(m)).map(|_| n - 1),
+            Self::Resolution(r) => item.media.iter().position(|m| {
+                usable(m)
+                    && m.video_resolution
+                        .as_deref()
+                        .is_some_and(|v| normalize_resolution(v) == *r)
+            }),
+        };
+        match found {
+            Some(i) => Ok(i),
+            None if !strict => Ok(first),
+            None => Err(Error::NoSuchVersion {
+                title: item.title.clone(),
+                wanted: self.to_string(),
+                available: item
+                    .media
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| format!("{}) {}", i + 1, m.summary()))
+                    .collect(),
+            }),
+        }
+    }
 }
 
 /// One file to fetch and where it will be saved.
@@ -49,19 +147,36 @@ impl ServerClient {
     /// Movies and episodes give their own files; a season or show expands to
     /// all of its episodes, in order. `item` must come from
     /// [`ServerClient::metadata`], which includes the media files. When an item
-    /// has several versions (e.g. 1080p and 4K), the first is used.
+    /// has several versions (e.g. 1080p and 4K), the first is used; see
+    /// [`plan_download_version`](Self::plan_download_version) to choose.
     pub async fn plan_download(
         &self,
         item: &Metadata,
         layout: &Layout,
     ) -> Result<Vec<PlannedFile>> {
+        self.plan_download_version(item, layout, &VersionChoice::First)
+            .await
+    }
+
+    /// Like [`plan_download`](Self::plan_download), choosing among versions.
+    ///
+    /// A version other than the first is saved with its resolution in the
+    /// file name (`Movie (2023) - 4K.mkv`), so versions can sit side by side.
+    /// For a movie or episode a version that doesn't exist is an error; for
+    /// a season or show, episodes lacking it use their first version.
+    pub async fn plan_download_version(
+        &self,
+        item: &Metadata,
+        layout: &Layout,
+        version: &VersionChoice,
+    ) -> Result<Vec<PlannedFile>> {
         match item.kind.as_str() {
-            "movie" => plan_files(item, &layout.movies_dir, None),
+            "movie" => plan_files(item, &layout.movies_dir, None, version, true),
             "episode" => {
                 let show_year = self
                     .show_year(item.grandparent_rating_key.as_deref())
                     .await?;
-                plan_files(item, &layout.tv_dir, Some(show_year))
+                plan_files(item, &layout.tv_dir, Some(show_year), version, true)
             }
             "show" | "season" => {
                 let (episodes, show_year) = if item.kind == "show" {
@@ -76,8 +191,14 @@ impl ServerClient {
                 for episode in episodes.iter().filter(|e| e.kind == "episode") {
                     // An episode without files can't be downloaded; skip it
                     // rather than failing the whole season.
-                    if episode.media.first().is_some_and(|m| !m.parts.is_empty()) {
-                        files.extend(plan_files(episode, &layout.tv_dir, Some(show_year))?);
+                    if episode.media.iter().any(|m| !m.parts.is_empty()) {
+                        files.extend(plan_files(
+                            episode,
+                            &layout.tv_dir,
+                            Some(show_year),
+                            version,
+                            false,
+                        )?);
                     }
                 }
                 if files.is_empty() {
@@ -244,17 +365,38 @@ async fn file_len(path: &Path) -> Result<u64> {
     }
 }
 
+/// Name for a non-default version, used in the file name: `4K`, `1080p`, or
+/// `Version 2` when the server gives no resolution (or two share one).
+fn edition_name(item: &Metadata, index: usize) -> String {
+    let media = &item.media[index];
+    let label = media.resolution_label();
+    let shared = label.is_some()
+        && item
+            .media
+            .iter()
+            .enumerate()
+            .any(|(i, m)| i != index && m.resolution_label() == label);
+    match label {
+        Some(l) if !shared => l,
+        Some(l) => format!("{l} v{}", index + 1),
+        None => format!("Version {}", index + 1),
+    }
+}
+
 /// Files for one movie or episode. `show_year` is `Some` for episodes.
 fn plan_files(
     item: &Metadata,
     root: &Path,
     show_year: Option<Option<u32>>,
+    version: &VersionChoice,
+    strict: bool,
 ) -> Result<Vec<PlannedFile>> {
-    let media = item
-        .media
-        .first()
-        .filter(|m| !m.parts.is_empty())
-        .ok_or_else(|| Error::NoMedia(item.title.clone()))?;
+    let index = version.pick(item, strict)?;
+    let media = &item.media[index];
+    // The first usable version keeps the plain name Plex expects.
+    let first = item.media.iter().position(|m| !m.parts.is_empty());
+    let edition = (Some(index) != first).then(|| edition_name(item, index));
+    let edition = edition.as_deref();
     let parts = media.parts.len();
     Ok(media
         .parts
@@ -270,12 +412,13 @@ fn plan_files(
                         season: item.parent_index,
                         number: item.index,
                         title: &item.title,
+                        edition,
                     },
                     i + 1,
                     parts,
                     &ext,
                 ),
-                None => naming::movie_path(&item.title, item.year, i + 1, parts, &ext),
+                None => naming::movie_path(&item.title, item.year, edition, i + 1, parts, &ext),
             };
             PlannedFile {
                 part: part.clone(),

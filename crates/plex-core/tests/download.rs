@@ -521,3 +521,125 @@ async fn other_kinds_are_not_downloadable() {
     let err = f.client.plan_download(&item, &layout()).await.unwrap_err();
     assert!(matches!(err, Error::NotDownloadable { .. }));
 }
+
+fn two_version_movie() -> serde_json::Value {
+    json!({"Metadata": [{
+        "ratingKey": "7", "type": "movie", "title": "Dune", "year": 2021,
+        "Media": [
+            {"container": "mkv", "videoResolution": "1080",
+             "Part": [{"id": 1, "key": "/library/parts/1/1/a.mkv", "size": 10, "container": "mkv"}]},
+            {"container": "mp4", "videoResolution": "4k",
+             "Part": [{"id": 2, "key": "/library/parts/2/1/b.mp4", "size": 20, "container": "mp4"}]},
+        ],
+    }]})
+}
+
+#[tokio::test]
+async fn chooses_version_by_number_or_resolution() {
+    use plex_core::VersionChoice;
+    let f = plan_server(vec![("/library/metadata/7", two_version_movie())]).await;
+    let item = f.client.metadata("7").await.unwrap();
+
+    // Default: first version, plain name.
+    let plan = f.client.plan_download(&item, &layout()).await.unwrap();
+    assert_eq!(plan[0].dest, Path::new("/m/Dune (2021)/Dune (2021).mkv"));
+
+    // Others get their resolution in the name so both can coexist.
+    for choice in [
+        VersionChoice::Index(2),
+        VersionChoice::Resolution("4k".into()),
+    ] {
+        let plan = f
+            .client
+            .plan_download_version(&item, &layout(), &choice)
+            .await
+            .unwrap();
+        assert_eq!(plan[0].part.id, 2);
+        assert_eq!(
+            plan[0].dest,
+            Path::new("/m/Dune (2021)/Dune (2021) - 4K.mp4")
+        );
+    }
+
+    // Choosing the first explicitly keeps the plain name.
+    let plan = f
+        .client
+        .plan_download_version(&item, &layout(), &"1080p".parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(plan[0].dest, Path::new("/m/Dune (2021)/Dune (2021).mkv"));
+}
+
+#[tokio::test]
+async fn missing_version_is_an_error_for_a_single_item() {
+    use plex_core::{Error, VersionChoice};
+    let f = plan_server(vec![("/library/metadata/7", two_version_movie())]).await;
+    let item = f.client.metadata("7").await.unwrap();
+    let err = f
+        .client
+        .plan_download_version(&item, &layout(), &VersionChoice::Index(3))
+        .await
+        .unwrap_err();
+    match err {
+        Error::NoSuchVersion { available, .. } => {
+            assert_eq!(available, ["1) 1080p mkv", "2) 4K mp4"]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn season_uses_requested_version_where_available() {
+    use plex_core::VersionChoice;
+    let ep = |key: &str, n: u32, media: serde_json::Value| {
+        json!({"ratingKey": key, "type": "episode", "title": format!("Ep {n}"),
+               "index": n, "parentIndex": 1, "grandparentTitle": "Show", "Media": media})
+    };
+    let part = |id: u64| json!([{"id": id, "key": format!("/library/parts/{id}/1/f.mkv"), "size": 5, "container": "mkv"}]);
+    let f = plan_server(vec![
+        ("/library/metadata/50", json!({"Metadata": [{
+            "ratingKey": "50", "type": "season", "title": "Season 1", "parentRatingKey": "40",
+        }]})),
+        ("/library/metadata/40", json!({"Metadata": [{
+            "ratingKey": "40", "type": "show", "title": "Show", "year": 2020,
+        }]})),
+        ("/library/metadata/50/children", json!({"Metadata": [
+            ep("51", 1, json!([
+                {"container": "mkv", "videoResolution": "1080", "Part": part(1)},
+                {"container": "mkv", "videoResolution": "4k", "Part": part(2)},
+            ])),
+            // No 4K for this one: falls back to its only version.
+            ep("52", 2, json!([{"container": "mkv", "videoResolution": "1080", "Part": part(3)}])),
+        ]})),
+    ])
+    .await;
+    let item = f.client.metadata("50").await.unwrap();
+    let plan = f
+        .client
+        .plan_download_version(&item, &layout(), &VersionChoice::Resolution("4k".into()))
+        .await
+        .unwrap();
+    let names: Vec<_> = plan
+        .iter()
+        .map(|p| p.dest.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names,
+        ["Show - S01E01 - Ep 1 - 4K.mkv", "Show - S01E02 - Ep 2.mkv"]
+    );
+}
+
+#[test]
+fn version_choice_parses_user_input() {
+    use plex_core::VersionChoice::{First, Index, Resolution};
+    let p = |s: &str| s.parse::<plex_core::VersionChoice>();
+    assert_eq!(p("first"), Ok(First));
+    assert_eq!(p("2"), Ok(Index(2)));
+    assert_eq!(p("4K"), Ok(Resolution("4k".into())));
+    assert_eq!(p("2160p"), Ok(Resolution("4k".into())));
+    assert_eq!(p("1080p"), Ok(Resolution("1080".into())));
+    assert_eq!(p("720"), Ok(Resolution("720".into())));
+    assert_eq!(p("sd"), Ok(Resolution("sd".into())));
+    assert!(p("0").is_err());
+    assert!(p("best").is_err());
+}

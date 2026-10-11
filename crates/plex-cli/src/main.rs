@@ -87,6 +87,11 @@ enum Command {
         /// How many files to download at once.
         #[arg(short, long, default_value_t = 2, value_parser = clap::value_parser!(u16).range(1..=8))]
         parallel: u16,
+        /// Which version to download when there are several: a number as
+        /// shown by `ls` (e.g. 2), or a resolution (4k, 1080p, 720p, sd).
+        /// For a season or show, episodes without it use their first version.
+        #[arg(long, default_value = "first", value_name = "N|RESOLUTION")]
+        version: plex_core::VersionChoice,
         /// Show where the files would be saved without downloading.
         #[arg(long)]
         dry_run: bool,
@@ -168,6 +173,7 @@ async fn run(cli: Cli) -> Result<()> {
             movies_dir,
             tv_dir,
             parallel,
+            version,
             dry_run,
             force,
         } => {
@@ -177,6 +183,7 @@ async fn run(cli: Cli) -> Result<()> {
                 movies_dir,
                 tv_dir,
                 parallel: usize::from(parallel),
+                version,
                 dry_run,
                 force,
                 json: cli.json,

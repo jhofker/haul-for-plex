@@ -343,6 +343,9 @@ pub struct ItemPage<'a> {
     pub children: &'a [Metadata],
     /// What a download would save; empty if the item can't be downloaded.
     pub plan: &'a [PlannedFile],
+    /// For a movie or episode with several versions: each version's number
+    /// (1-based) and what downloading it would save.
+    pub version_plans: &'a [(usize, Vec<PlannedFile>)],
 }
 
 pub fn item_page(p: &ItemPage<'_>) -> Markup {
@@ -370,16 +373,45 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
             @if !p.plan.is_empty() {
                 div.card {
                     form method="post" action={"/servers/" (id) "/items/" (p.item.rating_key) "/download"} {
-                        button.primary type="submit" {
-                            @if p.plan.len() == 1 { "Download" }
-                            @else { "Download all " (p.plan.len()) " files (" (format_size(total)) ")" }
+                        @if p.version_plans.len() > 1 {
+                            // Several versions: one button each, saved side by side.
+                            @for (n, files) in p.version_plans {
+                                @let media = &p.item.media[n - 1];
+                                div.version {
+                                    button.primary type="submit" name="version" value=(n) {
+                                        "Download " (media.summary())
+                                    }
+                                    " " span.muted { (format_size(files.iter().filter_map(|f| f.part.size).sum())) }
+                                    @for f in files { div.path { (f.dest.display()) } }
+                                }
+                            }
+                        } @else {
+                            @if matches!(p.item.kind.as_str(), "show" | "season") {
+                                div.row {
+                                    label.muted for="version" { "Version" }
+                                    select #version name="version" {
+                                        option value="first" { "First listed" }
+                                        option value="4k" { "4K" }
+                                        option value="1080" { "1080p" }
+                                        option value="720" { "720p" }
+                                        option value="sd" { "SD" }
+                                    }
+                                    span.muted { "Episodes without it use their first version." }
+                                }
+                            }
+                            button.primary type="submit" {
+                                @if p.plan.len() == 1 { "Download" }
+                                @else { "Download all " (p.plan.len()) " files (" (format_size(total)) ")" }
+                            }
                         }
                     }
-                    p.muted { "Saves to:" }
-                    @for f in p.plan.iter().take(5) {
-                        div.path { (f.dest.display()) }
+                    @if p.version_plans.len() <= 1 {
+                        p.muted { "Saves to:" }
+                        @for f in p.plan.iter().take(5) {
+                            div.path { (f.dest.display()) }
+                        }
+                        @if p.plan.len() > 5 { div.muted { "…and " (p.plan.len() - 5) " more" } }
                     }
-                    @if p.plan.len() > 5 { div.muted { "…and " (p.plan.len() - 5) " more" } }
                 }
             }
 
@@ -571,8 +603,8 @@ fn media_card(index: usize, count: usize, m: &Media) -> Markup {
     html! {
         div.card {
             h2 {
-                "File"
-                @if count > 1 { " " (index + 1) " of " (count) }
+                @if count > 1 { "Version " (index + 1) " of " (count) " · " (m.summary()) }
+                @else { "File" }
             }
             @if !facts.is_empty() {
                 dl.facts {

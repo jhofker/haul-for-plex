@@ -9,7 +9,7 @@ pub mod plextv;
 pub mod server;
 
 pub use config::{Auth, Config, ConfigStore};
-pub use download::{Layout, Outcome, PlannedFile, Progress};
+pub use download::{Layout, Outcome, PlannedFile, Progress, VersionChoice};
 pub use error::{Error, Result};
 pub use library::{Library, Media, Metadata, Part};
 pub use plextv::{ClientInfo, PlexTvClient, Resource};

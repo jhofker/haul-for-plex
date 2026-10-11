@@ -987,6 +987,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "url",
  "wiremock",
 ]
 

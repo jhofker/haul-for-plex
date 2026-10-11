@@ -69,3 +69,7 @@ img.cover.large.wide { width: 18rem; height: 10.1rem; }
 form.search { margin-bottom: 1.25rem; }
 .hero h1 { margin-top: 0; line-height: 1.15; }
 img.cover.large { margin-top: .3rem; }
+.version { margin-bottom: 1rem; }
+.version .path { margin-top: .25rem; }
+select { font: inherit; padding: .35rem .5rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+form .row { margin-bottom: .75rem; }

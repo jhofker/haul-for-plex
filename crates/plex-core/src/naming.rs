@@ -70,22 +70,37 @@ fn clean_ext(ext: &str) -> String {
     if ext.is_empty() { "bin".into() } else { ext }
 }
 
-/// `{stem}[ - pt{N}].{ext}` — the part suffix only appears for multi-part media.
-fn file_name(stem: &str, part: usize, parts: usize, ext: &str) -> String {
+/// `{stem}[ - {edition}][ - pt{N}].{ext}` — the part suffix only appears for
+/// multi-part media, and the edition only for a non-default version (so e.g.
+/// `Movie (2023) - 4K.mkv` sits beside `Movie (2023).mkv`, as Plex expects).
+fn file_name(stem: &str, edition: Option<&str>, part: usize, parts: usize, ext: &str) -> String {
+    let edition = match edition {
+        Some(e) => format!(" - {e}"),
+        None => String::new(),
+    };
     let suffix = if parts > 1 {
         format!(" - pt{part}")
     } else {
         String::new()
     };
-    format!("{}{suffix}.{}", sanitize(stem), clean_ext(ext))
+    format!("{}{edition}{suffix}.{}", sanitize(stem), clean_ext(ext))
 }
 
 /// Path of a movie file relative to the movies directory.
 ///
 /// `part` is 1-based; `parts` is how many files the movie has.
-pub fn movie_path(title: &str, year: Option<u32>, part: usize, parts: usize, ext: &str) -> PathBuf {
+///
+/// `edition` names a non-default version, e.g. `4K`.
+pub fn movie_path(
+    title: &str,
+    year: Option<u32>,
+    edition: Option<&str>,
+    part: usize,
+    parts: usize,
+    ext: &str,
+) -> PathBuf {
     let name = with_year(title, year);
-    PathBuf::from(sanitize(&name)).join(file_name(&name, part, parts, ext))
+    PathBuf::from(sanitize(&name)).join(file_name(&name, edition, part, parts, ext))
 }
 
 /// What identifies an episode for naming.
@@ -97,6 +112,8 @@ pub struct Episode<'a> {
     pub season: Option<u32>,
     pub number: Option<u32>,
     pub title: &'a str,
+    /// Name of a non-default version, e.g. `4K`.
+    pub edition: Option<&'a str>,
 }
 
 /// Path of an episode file relative to the TV directory.
@@ -110,11 +127,11 @@ pub fn episode_path(ep: &Episode<'_>, part: usize, parts: usize, ext: &str) -> P
             let stem = format!("{} - S{season:02}E{number:02} - {}", ep.show, ep.title);
             PathBuf::from(show_dir)
                 .join(format!("Season {season:02}"))
-                .join(file_name(&stem, part, parts, ext))
+                .join(file_name(&stem, ep.edition, part, parts, ext))
         }
         _ => {
             let stem = format!("{} - {}", ep.show, ep.title);
-            PathBuf::from(show_dir).join(file_name(&stem, part, parts, ext))
+            PathBuf::from(show_dir).join(file_name(&stem, ep.edition, part, parts, ext))
         }
     }
 }
@@ -123,6 +140,18 @@ pub fn episode_path(ep: &Episode<'_>, part: usize, parts: usize, ext: &str) -> P
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn edition_goes_before_part_suffix() {
+        assert_eq!(
+            movie_path("Dune", Some(2021), Some("4K"), 1, 1, "mkv"),
+            Path::new("Dune (2021)/Dune (2021) - 4K.mkv")
+        );
+        assert_eq!(
+            movie_path("Dune", Some(2021), Some("4K"), 2, 2, "mkv"),
+            Path::new("Dune (2021)/Dune (2021) - 4K - pt2.mkv")
+        );
+    }
 
     #[test]
     fn sanitize_replaces_forbidden_characters() {
@@ -170,11 +199,11 @@ mod tests {
     #[test]
     fn movie_layout() {
         assert_eq!(
-            movie_path("The Matrix", Some(1999), 1, 1, "mkv"),
+            movie_path("The Matrix", Some(1999), None, 1, 1, "mkv"),
             Path::new("The Matrix (1999)/The Matrix (1999).mkv")
         );
         assert_eq!(
-            movie_path("Unknown Year", None, 1, 1, ".MP4"),
+            movie_path("Unknown Year", None, None, 1, 1, ".MP4"),
             Path::new("Unknown Year/Unknown Year.mp4")
         );
     }
@@ -182,7 +211,7 @@ mod tests {
     #[test]
     fn multi_part_movies_get_part_suffixes() {
         assert_eq!(
-            movie_path("Epic", Some(1960), 2, 2, "avi"),
+            movie_path("Epic", Some(1960), None, 2, 2, "avi"),
             Path::new("Epic (1960)/Epic (1960) - pt2.avi")
         );
     }
@@ -195,6 +224,7 @@ mod tests {
             season: Some(6),
             number: Some(16),
             title: "The Manager and the Salesman",
+            edition: None,
         };
         assert_eq!(
             episode_path(&ep, 1, 1, "mkv"),
@@ -212,6 +242,7 @@ mod tests {
             season: Some(0),
             number: Some(1),
             title: "Christmas: Invasion",
+            edition: None,
         };
         assert_eq!(
             episode_path(&ep, 1, 1, "mkv"),
@@ -227,6 +258,7 @@ mod tests {
             season: None,
             number: None,
             title: "Some Guest",
+            edition: None,
         };
         assert_eq!(
             episode_path(&ep, 1, 1, "mp4"),

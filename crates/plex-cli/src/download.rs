@@ -17,6 +17,7 @@ pub struct Options {
     pub movies_dir: Option<PathBuf>,
     pub tv_dir: Option<PathBuf>,
     pub parallel: usize,
+    pub version: plex_core::VersionChoice,
     pub dry_run: bool,
     pub force: bool,
     pub json: bool,
@@ -44,7 +45,9 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     let item = client.metadata(&opts.key).await?;
 
     let layout = layout(opts.movies_dir, opts.tv_dir);
-    let files = client.plan_download(&item, &layout).await?;
+    let files = client
+        .plan_download_version(&item, &layout, &opts.version)
+        .await?;
 
     let total: u64 = files.iter().filter_map(|f| f.part.size).sum();
     if opts.dry_run && opts.json {

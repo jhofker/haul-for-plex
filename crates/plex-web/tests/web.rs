@@ -407,3 +407,16 @@ async fn search_is_scoped_to_server_and_library() {
     assert!(r.body.contains("Some Movie Show"));
     assert!(r.body.contains("Search Movies"));
 }
+
+#[tokio::test]
+async fn download_rejects_unknown_version() {
+    let env = env(true, None).await;
+    let req = Request::post(format!("/servers/{SERVER_ID}/items/10/download"))
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "http://localhost:8080")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("version=best"))
+        .unwrap();
+    let r = send(&env.app, req).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}

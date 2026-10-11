@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use futures_util::future::join_all;
 use maud::Markup;
-use plex_core::{Error, Metadata, Resource};
+use plex_core::{Error, Metadata, Resource, VersionChoice};
 use serde::Deserialize;
 
 use crate::guard::guard;
@@ -228,10 +228,24 @@ async fn item(State(state): State<AppState>, Path((id, key)): Path<(String, Stri
         _ => Vec::new(),
     };
     // Not every item can be downloaded (e.g. music); then there's no button.
+    let layout = &state.settings().layout;
     let plan = client
-        .plan_download(&item, &state.settings().layout)
+        .plan_download(&item, layout)
         .await
         .unwrap_or_default();
+    // A movie or episode with several versions gets a button for each.
+    let mut version_plans = Vec::new();
+    if item.is_playable() && item.media.len() > 1 {
+        for (i, media) in item.media.iter().enumerate() {
+            if media.parts.is_empty() {
+                continue;
+            }
+            let choice = VersionChoice::Index(i + 1);
+            if let Ok(files) = client.plan_download_version(&item, layout, &choice).await {
+                version_plans.push((i + 1, files));
+            }
+        }
+    }
 
     Ok(views::item_page(&ItemPage {
         user: &user,
@@ -240,6 +254,7 @@ async fn item(State(state): State<AppState>, Path((id, key)): Path<(String, Stri
         crumbs,
         children: &children,
         plan: &plan,
+        version_plans: &version_plans,
     }))
 }
 
@@ -380,15 +395,31 @@ async fn cover(
 async fn download(
     State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
-) -> Result<Redirect, AppError> {
+    body: axum::body::Bytes,
+) -> Result<Response, AppError> {
     user(&state)?;
+    // `version` is `first`, a version number, or a resolution; the body may be empty.
+    let version = url::form_urlencoded::parse(&body)
+        .find(|(k, _)| k == "version")
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_default();
+    let version: VersionChoice = match version.parse() {
+        Ok(v) => v,
+        Err(message) => {
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                views::error_page(None, "Bad request", &message),
+            )
+                .into_response());
+        }
+    };
     let (server, client) = state.server(&id).await?;
     let item = client.metadata(&key).await?;
     let plan = client
-        .plan_download(&item, &state.settings().layout)
+        .plan_download_version(&item, &state.settings().layout, &version)
         .await?;
     state.downloads().enqueue(&client, &server.name, plan);
-    Ok(Redirect::to("/downloads"))
+    Ok(Redirect::to("/downloads").into_response())
 }
 
 async fn downloads(State(state): State<AppState>) -> Page {
