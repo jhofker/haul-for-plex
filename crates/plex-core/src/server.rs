@@ -12,6 +12,10 @@ use crate::plextv::{ClientInfo, Connection, Resource};
 /// How long a single connection probe may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a response may stall between reads before the request fails; keeps
+/// a dead connection from hanging a download (the partial file stays resumable).
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// A connection that answered a probe.
 #[derive(Debug, Clone)]
 pub struct Reachable {
@@ -46,6 +50,7 @@ impl ServerClient {
             })?;
         let http = reqwest::Client::builder()
             .default_headers(info.headers())
+            .read_timeout(READ_TIMEOUT)
             .build()?;
 
         if let Some(conn) =

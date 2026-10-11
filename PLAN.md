@@ -64,6 +64,7 @@ All requests send `Accept: application/json` and the standard `X-Plex-*` headers
 <tv-dir>/{Show} ({Year})/Season {NN}/{Show} - S{NN}E{NN} - {Episode Title}.{ext}
 ```
 
+- The show folder uses the show's start year (an episode's own `year` is its air year).
 - Specials go in `Season 00`.
 - Multi-part media gets ` - pt{N}` before the extension.
 - Names are sanitized for Windows (`<>:"/\|?*`, trailing dots/spaces, reserved names).
@@ -75,7 +76,7 @@ All requests send `Accept: application/json` and the standard `X-Plex-*` headers
 3. `servers`, with connection probing. ✅
 4. `libraries <server>`, `ls <server> <library|key>`. ✅
 5. `search "<query>" [--server]`. ✅
-6. `download <server> <key>`: single file, progress bar, resume, layout naming.
+6. `download <server> <key>`: single file, progress bar, resume, layout naming. ✅
 7. Season/show downloads, `--parallel N`.
 8. Polish: `--json`, error messages, GitHub Actions release builds
    (linux x86_64/aarch64, macOS x86_64/aarch64, windows x86_64), Dockerfile + GHCR

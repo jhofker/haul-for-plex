@@ -1,6 +1,7 @@
 mod auth;
 mod browse;
 mod context;
+mod download;
 mod search;
 mod servers;
 mod table;
@@ -63,6 +64,28 @@ enum Command {
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
     },
+    /// Download a movie or episode into the Plex-style folder layout.
+    ///
+    /// Interrupted downloads resume where they left off when you run the
+    /// same command again.
+    Download {
+        /// Server name (or the start of it) or machine id.
+        server: String,
+        /// Item key from `ls` or `search`.
+        key: String,
+        /// Where movies are saved.
+        #[arg(long, env = "PLEX_GRABBER_MOVIES_DIR", value_name = "DIR")]
+        movies_dir: Option<std::path::PathBuf>,
+        /// Where TV episodes are saved.
+        #[arg(long, env = "PLEX_GRABBER_TV_DIR", value_name = "DIR")]
+        tv_dir: Option<std::path::PathBuf>,
+        /// Show where the files would be saved without downloading.
+        #[arg(long)]
+        dry_run: bool,
+        /// Replace an existing file that has a different size.
+        #[arg(long)]
+        force: bool,
+    },
     /// Show where the config file lives and this install's Plex client id.
     Config,
 }
@@ -111,6 +134,24 @@ async fn run(cli: Cli) -> Result<()> {
                 limit,
             )
             .await?
+        }
+        Command::Download {
+            server,
+            key,
+            movies_dir,
+            tv_dir,
+            dry_run,
+            force,
+        } => {
+            let options = download::Options {
+                server,
+                key,
+                movies_dir,
+                tv_dir,
+                dry_run,
+                force,
+            };
+            download::run(context::Context::load(store)?, options).await?
         }
         Command::Config => {
             let config = store.load_or_init()?;

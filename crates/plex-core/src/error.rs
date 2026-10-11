@@ -52,6 +52,23 @@ pub enum Error {
     #[error("no item with key {0} on this server")]
     ItemNotFound(String),
 
+    #[error("{0} refused the download; its owner may have disabled downloads for your account")]
+    DownloadForbidden(String),
+
+    #[error("{} already exists with a different size; use --force to replace it", .0.display())]
+    DestinationExists(PathBuf),
+
+    #[error(
+        "download ended at {actual} bytes but the server reported {expected}; the partial file was kept so it can resume"
+    )]
+    SizeMismatch { expected: u64, actual: u64 },
+
+    #[error("{title:?} is a {kind}; only movies and episodes can be downloaded")]
+    NotDownloadable { title: String, kind: String },
+
+    #[error("{0:?} has no media files")]
+    NoMedia(String),
+
     #[error("not logged in; run `plex-grabber login` first")]
     NotLoggedIn,
 }

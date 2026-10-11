@@ -13,6 +13,7 @@ plex-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 futures-util.workspace = true
+indicatif.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
