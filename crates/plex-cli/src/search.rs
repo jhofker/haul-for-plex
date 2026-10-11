@@ -11,6 +11,7 @@ pub async fn search(
     query: &str,
     server: Option<&str>,
     limit: usize,
+    json: bool,
 ) -> Result<()> {
     let servers = ctx.plextv()?.servers().await?;
     let targets = match server {
@@ -46,6 +47,20 @@ pub async fn search(
             })),
             Err(e) => eprintln!("warning: search failed on {}: {e}", server.name),
         }
+    }
+
+    if json {
+        let entries: Vec<_> = rows
+            .iter()
+            .map(|[server, key, kind, title, library]| {
+                serde_json::json!({
+                    "server": server, "key": key, "type": kind,
+                    "title": title, "library": library,
+                })
+            })
+            .collect();
+        crate::output::json(&entries);
+        return Ok(());
     }
 
     if rows.is_empty() {

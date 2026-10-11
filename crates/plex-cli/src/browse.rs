@@ -4,9 +4,17 @@ use plex_core::{Library, Metadata};
 use crate::context::Context;
 use crate::table;
 
-pub async fn libraries(mut ctx: Context, server: &str) -> Result<()> {
+pub async fn libraries(mut ctx: Context, server: &str, json: bool) -> Result<()> {
     let client = ctx.server(server).await?;
     let libs = client.libraries().await?;
+    if json {
+        let entries: Vec<_> = libs
+            .iter()
+            .map(|l| serde_json::json!({"key": l.key, "type": l.kind, "title": l.title}))
+            .collect();
+        crate::output::json(&entries);
+        return Ok(());
+    }
     let rows: Vec<[String; 3]> = libs
         .iter()
         .map(|l| [l.key.clone(), l.kind.clone(), l.title.clone()])
@@ -16,12 +24,16 @@ pub async fn libraries(mut ctx: Context, server: &str) -> Result<()> {
 }
 
 /// List a library (by name or key) or the contents/details of an item (by key).
-pub async fn ls(mut ctx: Context, server: &str, target: &str) -> Result<()> {
+pub async fn ls(mut ctx: Context, server: &str, target: &str, json: bool) -> Result<()> {
     let client = ctx.server(server).await?;
 
     let libs = client.libraries().await?;
     if let Some(lib) = find_library(&libs, target) {
         let items = client.library_items(&lib.key).await?;
+        if json {
+            crate::output::json(&items.iter().map(item_json).collect::<Vec<_>>());
+            return Ok(());
+        }
         print_items(&items);
         hint(server, &items);
         return Ok(());
@@ -29,9 +41,19 @@ pub async fn ls(mut ctx: Context, server: &str, target: &str) -> Result<()> {
 
     let item = client.metadata(target).await?;
     if item.is_playable() {
-        print_details(&item);
+        if json {
+            crate::output::json(&item_json(&item));
+        } else {
+            print_details(&item);
+        }
     } else {
         let children = client.children(&item.rating_key).await?;
+        if json {
+            let mut value = item_json(&item);
+            value["children"] = children.iter().map(item_json).collect();
+            crate::output::json(&value);
+            return Ok(());
+        }
         println!("{}\n", describe(&item));
         print_items(&children);
         hint(server, &children);
@@ -39,7 +61,34 @@ pub async fn ls(mut ctx: Context, server: &str, target: &str) -> Result<()> {
     Ok(())
 }
 
-/// Match a library by exact key, or by case-insensitive title (exact, then unique prefix).
+/// An item as JSON, including its files when they are known.
+fn item_json(m: &Metadata) -> serde_json::Value {
+    let files: Vec<_> = m
+        .media
+        .first()
+        .map(|media| {
+            media
+                .parts
+                .iter()
+                .map(|p| serde_json::json!({"file": p.file, "size": p.size, "container": p.container}))
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "key": m.rating_key,
+        "type": m.kind,
+        "title": m.title,
+        "year": m.year,
+        "description": describe(m),
+        "season": m.parent_index,
+        "episode": m.index,
+        "show": m.grandparent_title,
+        "files": files,
+    })
+}
+
+/// Match a library by case-insensitive title (exact, then unique prefix).
+/// Keys aren't matched: they would collide with item keys.
 fn find_library<'a>(libs: &'a [Library], target: &str) -> Option<&'a Library> {
     let t = target.to_lowercase();
     libs.iter()

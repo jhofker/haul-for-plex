@@ -54,7 +54,7 @@ pub fn logout(store: &ConfigStore) -> Result<()> {
     Ok(())
 }
 
-pub async fn whoami(store: &ConfigStore) -> Result<()> {
+pub async fn whoami(store: &ConfigStore, json: bool) -> Result<()> {
     let config = store.load_or_init()?;
     let plex = PlexTvClient::new(ClientInfo::new(&config.client_id))?.with_token(config.token()?);
     let user = match plex.user().await {
@@ -64,6 +64,15 @@ pub async fn whoami(store: &ConfigStore) -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     };
+
+    if json {
+        crate::output::json(&serde_json::json!({
+            "username": user.username,
+            "email": user.email,
+            "id": user.id,
+        }));
+        return Ok(());
+    }
 
     println!("username: {}", user.username);
     if let Some(email) = user.email.filter(|e| !e.is_empty()) {

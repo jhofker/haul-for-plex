@@ -170,3 +170,22 @@ async fn search_flattens_hubs_and_keeps_video() {
     assert_eq!(titles, ["Blade Runner", "Blade Runner 2049"]);
     assert_eq!(results[0].library_section_title.as_deref(), Some("Movies"));
 }
+
+#[tokio::test]
+async fn library_page_returns_total() {
+    let (server, client) = setup().await;
+    Mock::given(method("GET"))
+        .and(path("/library/sections/1/all"))
+        .and(header("X-Plex-Container-Start", "100"))
+        .and(header("X-Plex-Container-Size", "50"))
+        .respond_with(container(json!({
+            "totalSize": 230,
+            "Metadata": [{"ratingKey": "9", "type": "movie", "title": "Nine", "librarySectionID": 1}],
+        })))
+        .mount(&server)
+        .await;
+
+    let (items, total) = client.library_page("1", 100, 50).await.unwrap();
+    assert_eq!(total, 230);
+    assert_eq!(items[0].library_section_id, Some(1));
+}

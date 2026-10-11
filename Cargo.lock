@@ -856,6 +856,8 @@ dependencies = [
  "futures-util",
  "indicatif",
  "plex-core",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

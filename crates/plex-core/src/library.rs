@@ -55,6 +55,9 @@ pub struct Metadata {
     /// Name of the library the item is in; set on search results.
     #[serde(default)]
     pub library_section_title: Option<String>,
+    /// Key of the library the item is in.
+    #[serde(default, rename = "librarySectionID")]
+    pub library_section_id: Option<u64>,
     /// Number of episodes under a show or season.
     #[serde(default)]
     pub leaf_count: Option<u32>,
@@ -149,6 +152,23 @@ impl ServerClient {
     pub async fn libraries(&self) -> Result<Vec<Library>> {
         let env: Envelope<Directories> = send(self.get("library/sections")?).await?;
         Ok(env.container.directories)
+    }
+
+    /// One page of a library's top-level items, plus the library's total size.
+    pub async fn library_page(
+        &self,
+        library_key: &str,
+        start: usize,
+        size: usize,
+    ) -> Result<(Vec<Metadata>, usize)> {
+        let req = self
+            .get(&format!("library/sections/{library_key}/all"))?
+            .header("X-Plex-Container-Start", start.to_string())
+            .header("X-Plex-Container-Size", size.to_string());
+        let env: Envelope<MetadataList> = send(req).await?;
+        let page = env.container.metadata;
+        let total = env.container.total_size.unwrap_or(start + page.len());
+        Ok((page, total))
     }
 
     /// Every top-level item in a library (movies, or shows), fetched in pages.

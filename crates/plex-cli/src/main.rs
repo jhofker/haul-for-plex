@@ -2,6 +2,7 @@ mod auth;
 mod browse;
 mod context;
 mod download;
+mod output;
 mod search;
 mod servers;
 mod table;
@@ -19,6 +20,10 @@ use plex_core::ConfigStore;
     about = "Download media from Plex servers you have access to"
 )]
 struct Cli {
+    /// Print results as JSON instead of tables.
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -115,15 +120,15 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Login { force } => auth::login(&store, force).await?,
         Command::Logout => auth::logout(&store)?,
-        Command::Whoami => auth::whoami(&store).await?,
+        Command::Whoami => auth::whoami(&store, cli.json).await?,
         Command::Servers { verbose } => {
-            servers::list(context::Context::load(store)?, verbose).await?
+            servers::list(context::Context::load(store)?, verbose, cli.json).await?
         }
         Command::Libraries { server } => {
-            browse::libraries(context::Context::load(store)?, &server).await?
+            browse::libraries(context::Context::load(store)?, &server, cli.json).await?
         }
         Command::Ls { server, target } => {
-            browse::ls(context::Context::load(store)?, &server, &target).await?
+            browse::ls(context::Context::load(store)?, &server, &target, cli.json).await?
         }
         Command::Search {
             query,
@@ -135,6 +140,7 @@ async fn run(cli: Cli) -> Result<()> {
                 &query,
                 server.as_deref(),
                 limit,
+                cli.json,
             )
             .await?
         }
@@ -155,6 +161,7 @@ async fn run(cli: Cli) -> Result<()> {
                 parallel: usize::from(parallel),
                 dry_run,
                 force,
+                json: cli.json,
             };
             download::run(context::Context::load(store)?, options).await?
         }

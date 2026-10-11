@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_util::StreamExt;
 use futures_util::stream;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use plex_core::{Error, Layout, Outcome, PlannedFile};
 
 use crate::context::Context;
@@ -19,6 +19,7 @@ pub struct Options {
     pub parallel: usize,
     pub dry_run: bool,
     pub force: bool,
+    pub json: bool,
 }
 
 #[derive(Default)]
@@ -41,6 +42,14 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     let files = client.plan_download(&item, &layout).await?;
 
     let total: u64 = files.iter().filter_map(|f| f.part.size).sum();
+    if opts.dry_run && opts.json {
+        let entries: Vec<_> = files
+            .iter()
+            .map(|f| serde_json::json!({"path": f.dest, "size": f.part.size}))
+            .collect();
+        crate::output::json(&entries);
+        return Ok(());
+    }
     if opts.dry_run {
         for file in &files {
             let size = file.part.size.map(table::size).unwrap_or_default();
@@ -53,7 +62,7 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     }
 
     let have = files.iter().filter(|f| already_complete(f)).count();
-    if files.len() > 1 {
+    if files.len() > 1 && !opts.json {
         println!(
             "Downloading {} files ({}){}",
             files.len(),
@@ -69,7 +78,11 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg}\n{bar:40.cyan/blue} {bytes}/{total_bytes}  {bytes_per_sec}  ETA {eta}",
     )?;
-    let multi = MultiProgress::new();
+    let multi = if opts.json {
+        MultiProgress::with_draw_target(ProgressDrawTarget::hidden())
+    } else {
+        MultiProgress::new()
+    };
     // Set when the server refuses downloads outright: the rest would fail too.
     let refused = AtomicBool::new(false);
 
@@ -107,15 +120,22 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     // Report in plan order rather than completion order.
     let mut tally = Tally::default();
     let mut failures = Vec::new();
+    let mut entries = Vec::new();
     for file in &files {
         let Some((_, result)) = results.iter().find(|(f, _)| std::ptr::eq(*f, file)) else {
             continue;
         };
         match result {
-            None => tally.not_attempted += 1,
+            None => {
+                tally.not_attempted += 1;
+                entries.push(serde_json::json!({"path": file.dest, "status": "not_attempted"}));
+            }
             Some(Ok(Outcome::Skipped)) => {
                 tally.skipped += 1;
-                println!("Already have {}", file.dest.display());
+                entries.push(serde_json::json!({"path": file.dest, "status": "skipped"}));
+                if !opts.json {
+                    println!("Already have {}", file.dest.display());
+                }
             }
             Some(Ok(Outcome::Downloaded { resumed_from })) => {
                 tally.downloaded += 1;
@@ -133,12 +153,17 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
             }
             Some(Err(e)) => {
                 tally.failed += 1;
+                entries.push(serde_json::json!({
+                    "path": file.dest, "status": "failed", "error": e.to_string(),
+                }));
                 failures.push(format!("{}: {e}", file.dest.display()));
             }
         }
     }
 
-    if files.len() > 1 {
+    if opts.json {
+        crate::output::json(&entries);
+    } else if files.len() > 1 {
         println!(
             "\nDone: {} downloaded, {} already present, {} failed",
             tally.downloaded, tally.skipped, tally.failed
