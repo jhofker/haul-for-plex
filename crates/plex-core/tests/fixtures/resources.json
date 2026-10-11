@@ -1,0 +1,10 @@
+[
+  {"name":"Home Server","product":"Plex Media Server","productVersion":"1.41.0","platform":"Linux","clientIdentifier":"srv-owned","provides":"server","owned":true,"presence":true,"accessToken":"owned-token","httpsRequired":false,"relay":true,
+   "connections":[
+     {"protocol":"https","address":"192.168.1.10","port":32400,"uri":"https://192-168-1-10.abc.plex.direct:32400","local":true,"relay":false,"IPv6":false},
+     {"protocol":"https","address":"203.0.113.5","port":32400,"uri":"https://203-0-113-5.abc.plex.direct:32400","local":false,"relay":false,"IPv6":false},
+     {"protocol":"https","address":"198.51.100.1","port":8443,"uri":"https://198-51-100-1.abc.plex.direct:8443","local":false,"relay":true,"IPv6":false}
+   ]},
+  {"name":"Friend's Server","product":"Plex Media Server","productVersion":"1.40.0","platform":"Windows","clientIdentifier":"srv-shared","provides":"server","owned":false,"presence":true,"accessToken":"shared-token","connections":[]},
+  {"name":"Living Room TV","product":"Plex for Android (TV)","productVersion":"10.0","platform":"Android","clientIdentifier":"tv-1","provides":"client,player","owned":true,"presence":false,"accessToken":null,"connections":[]}
+]

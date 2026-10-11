@@ -1,0 +1,17 @@
+[package]
+name = "plex-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "plex-grabber"
+path = "src/main.rs"
+
+[dependencies]
+plex-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
