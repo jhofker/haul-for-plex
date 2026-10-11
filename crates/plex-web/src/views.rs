@@ -32,7 +32,6 @@ pub fn layout(title: &str, active: &str, user: Option<&str>, body: Markup) -> Ma
                     @if let Some(user) = user {
                         nav {
                             (link("/servers", "Servers", "servers"))
-                            (link("/search", "Search", "search"))
                             (link("/downloads", "Downloads", "downloads"))
                         }
                         form.logout method="post" action="/logout" {
@@ -136,6 +135,9 @@ pub fn servers_page(user: &str, servers: &[Resource]) -> Markup {
         Some(user),
         html! {
             h1 { "Servers" }
+            @if !servers.is_empty() {
+                (search_form(SearchScope::default(), "", "Search all servers"))
+            }
             @if servers.is_empty() {
                 p.empty { "No servers are shared with this Plex account." }
             } @else {
@@ -175,6 +177,11 @@ pub fn libraries_page(user: &str, server: &Resource, libraries: &[Library]) -> M
         html! {
             div.crumbs { a href="/servers" { "Servers" } }
             h1 { (server.name) }
+            (search_form(
+                SearchScope { server: Some(&server.client_identifier), library: None },
+                "",
+                &format!("Search {}", server.name),
+            ))
             @if libraries.is_empty() {
                 p.empty { "This server has no libraries you can access." }
             } @else {
@@ -310,6 +317,11 @@ pub fn library_page(
                 a href={"/servers/" (server.client_identifier)} { (server.name) }
             }
             h1 { (library_title) }
+            (search_form(
+                SearchScope { server: Some(&server.client_identifier), library: Some(library_key) },
+                "",
+                &format!("Search {library_title}"),
+            ))
             p.muted { (total) " items" }
             (items_table(&server.client_identifier, items, false))
             @if pages > 1 {
@@ -607,33 +619,71 @@ pub struct SearchResults<'a> {
     pub skipped: &'a [String],
 }
 
-pub fn search_page(user: &str, query: &str, results: Option<SearchResults<'_>>) -> Markup {
+/// Where a search looks: everywhere, one server, or one library of a server.
+#[derive(Clone, Copy, Default)]
+pub struct SearchScope<'a> {
+    pub server: Option<&'a str>,
+    pub library: Option<&'a str>,
+}
+
+/// Search box that swaps just the page's `<main>` and shows a spinner meanwhile.
+pub fn search_form(scope: SearchScope<'_>, query: &str, placeholder: &str) -> Markup {
+    html! {
+        form.row.search method="get" action="/search"
+            hx-get="/search" hx-target="main" hx-select="main" hx-swap="outerHTML"
+            hx-push-url="true" hx-indicator="#search-spinner" hx-disabled-elt="find button" {
+            @if let Some(server) = scope.server { input type="hidden" name="server" value=(server); }
+            @if let Some(library) = scope.library { input type="hidden" name="library" value=(library); }
+            input type="search" name="q" value=(query) placeholder=(placeholder);
+            button.primary type="submit" { "Search" }
+            span.spinner #search-spinner role="status" aria-label="Searching" {}
+        }
+    }
+}
+
+pub struct SearchPage<'a> {
+    pub user: &'a str,
+    pub query: &'a str,
+    pub scope: SearchScope<'a>,
+    /// Server and library names, for the heading and breadcrumbs.
+    pub server: Option<&'a Resource>,
+    pub library_title: Option<&'a str>,
+    pub results: Option<SearchResults<'a>>,
+}
+
+pub fn search_page(p: &SearchPage<'_>) -> Markup {
+    let place = match (p.library_title, p.server) {
+        (Some(lib), _) => format!("Search {lib}"),
+        (None, Some(server)) => format!("Search {}", server.name),
+        _ => "Search all servers".to_string(),
+    };
     layout(
         "Search",
-        "search",
-        Some(user),
+        "servers",
+        Some(p.user),
         html! {
-            h1 { "Search" }
-            form.row method="get" action="/search"
-                hx-get="/search" hx-target="#results" hx-select="#results" hx-swap="outerHTML"
-                hx-push-url="true" hx-indicator="#search-spinner" hx-disabled-elt="find button" {
-                input type="search" name="q" value=(query) placeholder="Movie or show title" autofocus;
-                button.primary type="submit" { "Search" }
-                span.spinner #search-spinner role="status" aria-label="Searching" {}
-            }
-            div #results {
-            @if let Some(results) = results {
-                @for name in results.skipped { p.muted { "Skipped " (name) " (unreachable)" } }
-                @if results.found.iter().all(|(_, items)| items.is_empty()) {
-                    p.empty { "No results for “" (query) "”." }
-                }
-                @for (server, items) in results.found {
-                    @if !items.is_empty() {
-                        h2 { (server.name) }
-                        (items_table(&server.client_identifier, items, true))
+            div.crumbs {
+                a href="/servers" { "Servers" }
+                @if let Some(server) = p.server {
+                    " › " a href={"/servers/" (server.client_identifier)} { (server.name) }
+                    @if let (Some(lib), Some(key)) = (p.library_title, p.scope.library) {
+                        " › " a href={"/servers/" (server.client_identifier) "/libraries/" (key)} { (lib) }
                     }
                 }
             }
+            h1 { "Search" }
+            (search_form(p.scope, p.query, &place))
+            @if let Some(results) = &p.results {
+                @for name in results.skipped { p.muted { "Skipped " (name) " (unreachable)" } }
+                @if results.found.iter().all(|(_, items)| items.is_empty()) {
+                    p.empty { "No results for “" (p.query) "”." }
+                }
+                @for (server, items) in results.found {
+                    @if !items.is_empty() {
+                        @if p.scope.server.is_none() { h2 { (server.name) } }
+                        (items_table(&server.client_identifier, items, true))
+                    }
+                }
             }
         },
     )

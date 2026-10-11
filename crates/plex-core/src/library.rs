@@ -334,10 +334,26 @@ impl ServerClient {
     /// Search every library on the server for movies, shows, seasons and episodes.
     /// `limit` caps results per kind.
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<Metadata>> {
-        let params = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("query", query)
-            .append_pair("limit", &limit.to_string())
-            .finish();
+        self.search_in(query, limit, None).await
+    }
+
+    /// Like [`search`](Self::search), optionally restricted to one library (by key).
+    pub async fn search_in(
+        &self,
+        query: &str,
+        limit: usize,
+        library_key: Option<&str>,
+    ) -> Result<Vec<Metadata>> {
+        // Built in its own block so the serializer isn't held across the await.
+        let params = {
+            let mut p = url::form_urlencoded::Serializer::new(String::new());
+            p.append_pair("query", query)
+                .append_pair("limit", &limit.to_string());
+            if let Some(key) = library_key {
+                p.append_pair("sectionId", key);
+            }
+            p.finish()
+        };
         let env: Envelope<Hubs> = send(self.get(&format!("hubs/search?{params}"))?).await?;
         let tokens = tokens(query);
         let mut seen = std::collections::HashSet::new();
@@ -349,6 +365,11 @@ impl ServerClient {
             .filter(|m| SEARCHABLE_KINDS.contains(&m.kind.as_str()))
             .filter(|m| seen.insert(m.rating_key.clone()))
             .filter(|m| matches_title(m, &tokens))
+            // Servers don't reliably honour `sectionId`, so filter here as well.
+            .filter(|m| match (library_key, m.library_section_id) {
+                (Some(key), Some(id)) => key == id.to_string(),
+                _ => true,
+            })
             .collect();
         // Exact title first, then titles starting with the query, then the rest.
         let whole = compact(query);

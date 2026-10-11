@@ -6,12 +6,12 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use futures_util::future::join_all;
 use maud::Markup;
-use plex_core::{Error, Metadata};
+use plex_core::{Error, Metadata, Resource};
 use serde::Deserialize;
 
 use crate::guard::guard;
 use crate::state::{AppState, Settings};
-use crate::views::{self, ItemPage, PAGE_SIZE, SearchResults};
+use crate::views::{self, ItemPage, PAGE_SIZE};
 
 pub fn router(settings: Settings) -> Router {
     let state = AppState::new(settings);
@@ -246,50 +246,105 @@ async fn item(State(state): State<AppState>, Path((id, key)): Path<(String, Stri
 #[derive(Deserialize)]
 struct SearchQuery {
     q: Option<String>,
+    /// Restrict to one server (client identifier).
+    server: Option<String>,
+    /// Restrict to one library of that server (section key).
+    library: Option<String>,
 }
 
 async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>) -> Page {
     let user = user(&state)?;
     let q = query.q.unwrap_or_default();
     let q = q.trim();
+    let server_id = query.server.filter(|s| !s.is_empty());
+    // A library only makes sense within a server.
+    let library = query
+        .library
+        .filter(|l| !l.is_empty() && server_id.is_some());
+
+    let scoped = match &server_id {
+        Some(id) => Some(state.server(id).await?),
+        None => None,
+    };
+    let library_title = match (&scoped, &library) {
+        (Some((_, client)), Some(key)) => client
+            .libraries()
+            .await?
+            .into_iter()
+            .find(|l| &l.key == key)
+            .map(|l| l.title),
+        _ => None,
+    };
+    let scope = views::SearchScope {
+        server: server_id.as_deref(),
+        library: library.as_deref(),
+    };
+    let page = |results| {
+        views::search_page(&views::SearchPage {
+            user: &user,
+            query: q,
+            scope,
+            server: scoped.as_ref().map(|(r, _)| r),
+            library_title: library_title.as_deref(),
+            results,
+        })
+    };
     if q.is_empty() {
-        return Ok(views::search_page(&user, "", None));
+        return Ok(page(None));
     }
 
-    let servers = state.servers().await?;
-    let outcomes = join_all(servers.iter().map(|s| {
-        let state = state.clone();
-        let id = s.client_identifier.clone();
-        async move {
-            let (resource, client) = state.server(&id).await?;
-            let items: Vec<Metadata> =
-                tokio::time::timeout(std::time::Duration::from_secs(10), client.search(q, 20))
-                    .await
-                    .map_err(|_| Error::Unreachable {
-                        server: id.clone(),
-                        attempts: vec![("search".into(), "timed out".into())],
-                    })??;
-            Ok::<_, Error>((resource, items))
+    let outcomes: Vec<(Resource, Result<Vec<Metadata>, Error>)> = match &scoped {
+        Some((resource, client)) => {
+            let items = search_one(client, q, library.as_deref()).await;
+            vec![(resource.clone(), items)]
         }
-    }))
-    .await;
+        None => {
+            let servers = state.servers().await?;
+            join_all(servers.into_iter().map(|resource| {
+                let state = state.clone();
+                async move {
+                    let items = match state.server(&resource.client_identifier).await {
+                        Ok((_, client)) => search_one(&client, q, None).await,
+                        Err(e) => Err(e),
+                    };
+                    (resource, items)
+                }
+            }))
+            .await
+        }
+    };
 
     let mut found = Vec::new();
     let mut skipped = Vec::new();
-    for (server, outcome) in servers.iter().zip(outcomes) {
+    for (resource, outcome) in outcomes {
         match outcome {
-            Ok(entry) => found.push(entry),
-            Err(_) => skipped.push(server.name.clone()),
+            Ok(items) => found.push((resource, items)),
+            // Searching one chosen server should say why it failed.
+            Err(e) if scoped.is_some() => return Err(e.into()),
+            Err(_) => skipped.push(resource.name),
         }
     }
-    Ok(views::search_page(
-        &user,
-        q,
-        Some(SearchResults {
-            found: &found,
-            skipped: &skipped,
-        }),
-    ))
+    Ok(page(Some(views::SearchResults {
+        found: &found,
+        skipped: &skipped,
+    })))
+}
+
+/// Search one server, giving up after 10 seconds so a dead server can't stall the page.
+async fn search_one(
+    client: &plex_core::ServerClient,
+    q: &str,
+    library: Option<&str>,
+) -> Result<Vec<Metadata>, Error> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.search_in(q, 20, library),
+    )
+    .await
+    .map_err(|_| Error::Unreachable {
+        server: client.name().to_string(),
+        attempts: vec![("search".into(), "timed out".into())],
+    })?
 }
 
 #[derive(Deserialize)]

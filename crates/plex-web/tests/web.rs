@@ -51,6 +51,18 @@ async fn env(logged_in: bool, password: Option<&str>) -> Env {
         container(json!({"Directory": [{"key": "1", "title": "Movies", "type": "movie"}]})),
     )
     .await;
+    // Only answers when the search is limited to library 1.
+    Mock::given(method("GET"))
+        .and(path("/hubs/search"))
+        .and(wiremock::matchers::query_param("sectionId", "1"))
+        .respond_with(container(json!({"Hub": [{"type": "movie", "Metadata": [
+            {"ratingKey": "10", "type": "movie", "title": "Some Movie", "year": 1999},
+            {"ratingKey": "11", "type": "episode", "title": "Pilot", "index": 1,
+             "parentIndex": 2, "grandparentTitle": "Some Movie Show",
+             "grandparentRatingKey": "20"},
+        ]}]})))
+        .mount(&pms)
+        .await;
     mock_get(
         &pms,
         "/photo/:/transcode",
@@ -366,4 +378,32 @@ async fn download_is_queued_and_saved() {
     assert_eq!(r.status, StatusCode::SEE_OTHER);
     let r = get(&env.app, "/downloads/list").await;
     assert!(r.body.contains("No downloads yet"));
+}
+
+#[tokio::test]
+async fn search_is_scoped_to_server_and_library() {
+    let env = env(true, None).await;
+
+    // Search is no longer a top-level nav item; each view has its own box.
+    let r = get(&env.app, "/servers").await;
+    assert!(!r.body.contains("href=\"/search\""));
+    assert!(r.body.contains("action=\"/search\""));
+    let r = get(&env.app, &format!("/servers/{SERVER_ID}")).await;
+    assert!(
+        r.body
+            .contains(&format!("name=\"server\" value=\"{SERVER_ID}\""))
+    );
+    let r = get(&env.app, &format!("/servers/{SERVER_ID}/libraries/1")).await;
+    assert!(r.body.contains("name=\"library\" value=\"1\""));
+
+    let r = get(
+        &env.app,
+        &format!("/search?q=movie&server={SERVER_ID}&library=1"),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Some Movie (1999)"));
+    // Episodes say which show they are from.
+    assert!(r.body.contains("Some Movie Show"));
+    assert!(r.body.contains("Search Movies"));
 }
