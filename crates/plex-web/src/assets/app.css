@@ -58,3 +58,11 @@ dl.facts dd { margin: 0; }
 h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
 h3 { font-size: .95rem; margin: 1rem 0 .25rem; }
 table.streams { margin-top: .75rem; }
+.titlecell { display: flex; align-items: center; gap: .75rem; }
+img.cover { width: 2.5rem; height: 3.75rem; object-fit: cover; border-radius: 4px; background: var(--line); flex: none; }
+img.cover.wide { width: 4.5rem; height: 2.53rem; }
+img.cover.large { width: 12rem; height: 18rem; border-radius: 8px; }
+img.cover.large.wide { width: 18rem; height: 10.1rem; }
+.hero { display: flex; gap: 1.25rem; align-items: flex-start; margin-bottom: 1rem; }
+.hero > div { min-width: 0; flex: 1; }
+@media (max-width: 40rem) { .hero { flex-direction: column; } img.cover.large { width: 8rem; height: 12rem; } }

@@ -219,6 +219,16 @@ fn item_detail(m: &Metadata) -> String {
     }
 }
 
+/// Cover image; hidden by theme.js if the server has none.
+fn cover(server_id: &str, m: &Metadata, large: bool) -> Markup {
+    let wide = m.kind == "episode";
+    html! {
+        img.cover.wide[wide].large[large]
+            src={"/servers/" (server_id) "/items/" (m.rating_key) "/cover" @if wide { "?wide=true" }}
+            alt="" loading="lazy";
+    }
+}
+
 fn items_table(server_id: &str, items: &[Metadata]) -> Markup {
     html! {
         @if items.is_empty() {
@@ -229,7 +239,14 @@ fn items_table(server_id: &str, items: &[Metadata]) -> Markup {
                 tbody {
                     @for m in items {
                         tr {
-                            td { a href={"/servers/" (server_id) "/items/" (m.rating_key)} { (item_title(m)) } }
+                            td {
+                                div.titlecell {
+                                    @if matches!(m.kind.as_str(), "movie" | "show" | "season") {
+                                        (cover(server_id, m, false))
+                                    }
+                                    a href={"/servers/" (server_id) "/items/" (m.rating_key)} { (item_title(m)) }
+                                }
+                            }
                             td { span.badge { (m.kind) } }
                             td.muted { (item_detail(m)) }
                         }
@@ -300,9 +317,14 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
                 a href={"/servers/" (id)} { (p.server.name) }
                 @for (href, label) in &p.crumbs { " › " a href=(href) { (label) } }
             }
-            h1 { (item_title(p.item)) }
-            p { span.badge { (p.item.kind) } " " span.muted { (item_detail(p.item)) } }
-            (about(p.item))
+            div.hero {
+                (cover(id, p.item, true))
+                div {
+                    h1 { (item_title(p.item)) }
+                    p { span.badge { (p.item.kind) } " " span.muted { (item_detail(p.item)) } }
+                    (about(p.item))
+                }
+            }
 
             @if !p.plan.is_empty() {
                 div.card {

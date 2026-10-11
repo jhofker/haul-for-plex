@@ -53,6 +53,14 @@ async fn env(logged_in: bool, password: Option<&str>) -> Env {
     .await;
     mock_get(
         &pms,
+        "/photo/:/transcode",
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "image/jpeg")
+            .set_body_bytes(b"fake-jpeg".to_vec()),
+    )
+    .await;
+    mock_get(
+        &pms,
         "/library/sections/1/all",
         container(json!({"totalSize": 250, "Metadata": [
             {"ratingKey": "10", "type": "movie", "title": "<script>alert(1)</script>", "year": 1999},
@@ -302,6 +310,15 @@ async fn browses_servers_libraries_and_items() {
     // Titles are escaped, not interpreted as HTML.
     assert!(!r.body.contains("<script>alert(1)"));
     assert!(r.body.contains("&lt;script&gt;alert(1)"));
+    assert!(
+        r.body
+            .contains(&format!("/servers/{SERVER_ID}/items/10/cover"))
+    );
+
+    let r = get(&env.app, &format!("/servers/{SERVER_ID}/items/10/cover")).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::CONTENT_TYPE], "image/jpeg");
+    assert_eq!(r.body, "fake-jpeg");
 
     let r = get(&env.app, &format!("/servers/{SERVER_ID}/items/10")).await;
     assert!(r.body.contains("Some Movie (1999)"));

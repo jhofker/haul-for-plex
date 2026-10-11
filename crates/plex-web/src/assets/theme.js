@@ -18,4 +18,8 @@
     root.setAttribute("data-theme", next);
     try { localStorage.setItem("theme", next); } catch (err) {}
   });
+  // Hide cover images the server couldn't provide (error events don't bubble).
+  document.addEventListener("error", function (e) {
+    if (e.target && e.target.tagName === "IMG") e.target.style.visibility = "hidden";
+  }, true);
 })();

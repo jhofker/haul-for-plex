@@ -365,6 +365,47 @@ impl ServerClient {
         Ok(found)
     }
 
+    /// Cover art for an item, scaled down by the server to fit `width`×`height`.
+    /// Returns the image bytes and their content type.
+    pub async fn thumbnail(
+        &self,
+        rating_key: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<(Vec<u8>, String)> {
+        let source = format!("/library/metadata/{rating_key}/thumb");
+        let params = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("url", &source)
+            .append_pair("width", &width.to_string())
+            .append_pair("height", &height.to_string())
+            .append_pair("minSize", "1")
+            .finish();
+        // Fall back to the original image if the server can't transcode.
+        let mut last = None;
+        for path in [
+            format!("photo/:/transcode?{params}"),
+            source[1..].to_string(),
+        ] {
+            let resp = self.get(&path)?.send().await?;
+            let status = resp.status();
+            if status.is_success() {
+                let kind = resp
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("image/jpeg")
+                    .to_string();
+                return Ok((resp.bytes().await?.to_vec(), kind));
+            }
+            last = Some(Error::Status {
+                status,
+                url: resp.url().to_string(),
+                body: String::new(),
+            });
+        }
+        Err(last.expect("loop ran"))
+    }
+
     /// Full details of one item, including its media files.
     pub async fn metadata(&self, rating_key: &str) -> Result<Metadata> {
         let env: Envelope<MetadataList> =

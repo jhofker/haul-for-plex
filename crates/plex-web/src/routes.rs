@@ -26,6 +26,7 @@ pub fn router(settings: Settings) -> Router {
         .route("/servers/{id}/libraries/{key}", get(library))
         .route("/servers/{id}/items/{key}", get(item))
         .route("/servers/{id}/items/{key}/download", post(download))
+        .route("/servers/{id}/items/{key}/cover", get(cover))
         .route("/search", get(search))
         .route("/downloads", get(downloads))
         .route("/downloads/list", get(downloads_list))
@@ -289,6 +290,34 @@ async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>)
             skipped: &skipped,
         }),
     ))
+}
+
+#[derive(Deserialize)]
+struct CoverQuery {
+    #[serde(default)]
+    wide: bool,
+}
+
+/// Cover art, proxied so the browser needn't reach the Plex server or see its token.
+async fn cover(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(String, String)>,
+    Query(query): Query<CoverQuery>,
+) -> Result<Response, AppError> {
+    user(&state)?;
+    let (_, client) = state.server(&id).await?;
+    let (w, h) = if query.wide { (400, 225) } else { (300, 450) };
+    match client.thumbnail(&key, w, h).await {
+        Ok((bytes, kind)) => Ok((
+            [
+                (header::CONTENT_TYPE, kind),
+                (header::CACHE_CONTROL, "private, max-age=86400".into()),
+            ],
+            bytes,
+        )
+            .into_response()),
+        Err(_) => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
 }
 
 // ---- downloads ------------------------------------------------------------
