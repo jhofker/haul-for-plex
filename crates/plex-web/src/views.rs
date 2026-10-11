@@ -21,11 +21,13 @@ pub fn layout(title: &str, active: &str, user: Option<&str>, body: Markup) -> Ma
                 title { (title) " · plex-grabber" }
                 link rel="icon" href="data:,";
                 link rel="stylesheet" href="/static/app.css";
+                script src="/static/theme.js" {}
                 script src="/static/htmx.min.js" defer {}
             }
             body {
                 header.top {
                     a.brand href="/" { "plex-grabber" }
+                    @if user.is_none() { span style="flex:1" {} }
                     @if let Some(user) = user {
                         nav {
                             (link("/servers", "Servers", "servers"))
@@ -37,6 +39,7 @@ pub fn layout(title: &str, active: &str, user: Option<&str>, body: Markup) -> Ma
                             button.link type="submit" { "Sign out" }
                         }
                     }
+                    button.theme type="button" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" { "◐" }
                 }
                 main { (body) }
             }

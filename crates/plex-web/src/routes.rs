@@ -33,6 +33,7 @@ pub fn router(settings: Settings) -> Router {
         .route("/downloads/{id}/cancel", post(downloads_cancel))
         .route("/static/htmx.min.js", get(htmx))
         .route("/static/app.css", get(css))
+        .route("/static/theme.js", get(theme_js))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
 }
@@ -334,6 +335,16 @@ async fn htmx() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         include_str!("assets/htmx.min.js"),
+    )
+}
+
+async fn theme_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/theme.js"),
     )
 }
 

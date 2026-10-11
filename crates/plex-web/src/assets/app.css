@@ -1,12 +1,19 @@
 :root {
+  color-scheme: light;
   --bg: #fafafa; --fg: #1c1c1e; --muted: #6b6b70; --card: #fff; --line: #e3e3e8;
   --accent: #c27a00; --accent-fg: #fff; --ok: #1a7f37; --bad: #c62828;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme=light]) {
+    color-scheme: dark;
     --bg: #141417; --fg: #ececf0; --muted: #9a9aa3; --card: #1c1c21; --line: #2e2e36;
     --accent: #e5a00d; --accent-fg: #1a1200; --ok: #4cc26b; --bad: #ff7b72;
   }
+}
+:root[data-theme=dark] {
+  color-scheme: dark;
+  --bg: #141417; --fg: #ececf0; --muted: #9a9aa3; --card: #1c1c21; --line: #2e2e36;
+  --accent: #e5a00d; --accent-fg: #1a1200; --ok: #4cc26b; --bad: #ff7b72;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
@@ -16,6 +23,7 @@ header.top { display: flex; align-items: center; gap: 1.25rem; padding: .75rem 1
 .brand { font-weight: 700; color: var(--fg); }
 nav { display: flex; gap: 1rem; flex: 1; }
 nav a.active { color: var(--fg); font-weight: 600; }
+.theme { font-size: 1rem; line-height: 1; padding: .3rem .5rem; }
 .logout { display: flex; align-items: center; gap: .5rem; margin: 0; }
 .user { color: var(--muted); }
 main { max-width: 64rem; margin: 0 auto; padding: 1rem; }
