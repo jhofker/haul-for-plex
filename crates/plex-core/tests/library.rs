@@ -142,3 +142,31 @@ async fn children_of_a_show_are_seasons() {
     assert_eq!(seasons[0].leaf_count, Some(10));
     assert!(!seasons[0].is_playable());
 }
+
+#[tokio::test]
+async fn search_flattens_hubs_and_keeps_video() {
+    let (server, client) = setup().await;
+    Mock::given(method("GET"))
+        .and(path("/hubs/search"))
+        .and(wiremock::matchers::query_param("query", "blade runner"))
+        .and(wiremock::matchers::query_param("limit", "10"))
+        .and(header("X-Plex-Token", "server-token"))
+        .respond_with(container(json!({"size": 4, "Hub": [
+            {"type": "movie", "hubIdentifier": "movie", "size": 2, "Metadata": [
+                {"ratingKey": "10", "type": "movie", "title": "Blade Runner", "year": 1982, "librarySectionTitle": "Movies"},
+                {"ratingKey": "11", "type": "movie", "title": "Blade Runner 2049", "year": 2017},
+            ]},
+            {"type": "actor", "hubIdentifier": "actor", "size": 1, "Directory": [{"tag": "Harrison Ford"}]},
+            {"type": "track", "hubIdentifier": "track", "size": 1, "Metadata": [
+                {"ratingKey": "90", "type": "track", "title": "Blade Runner Blues"},
+            ]},
+            {"type": "show", "hubIdentifier": "show", "size": 0},
+        ]})))
+        .mount(&server)
+        .await;
+
+    let results = client.search("blade runner", 10).await.unwrap();
+    let titles: Vec<_> = results.iter().map(|m| m.title.as_str()).collect();
+    assert_eq!(titles, ["Blade Runner", "Blade Runner 2049"]);
+    assert_eq!(results[0].library_section_title.as_deref(), Some("Movies"));
+}

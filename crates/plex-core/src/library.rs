@@ -50,6 +50,9 @@ pub struct Metadata {
     pub grandparent_year: Option<u32>,
     #[serde(default)]
     pub grandparent_rating_key: Option<String>,
+    /// Name of the library the item is in; set on search results.
+    #[serde(default)]
+    pub library_section_title: Option<String>,
     /// Number of episodes under a show or season.
     #[serde(default)]
     pub leaf_count: Option<u32>,
@@ -116,6 +119,22 @@ struct Directories {
 }
 
 #[derive(Deserialize)]
+struct Hubs {
+    #[serde(default, rename = "Hub")]
+    hubs: Vec<Hub>,
+}
+
+#[derive(Deserialize)]
+struct Hub {
+    #[serde(default, rename = "Metadata")]
+    metadata: Vec<Metadata>,
+}
+
+/// Item kinds search returns; music, photos and people are left out since
+/// only video can be downloaded into the movie/TV layout.
+const SEARCHABLE_KINDS: [&str; 4] = ["movie", "show", "season", "episode"];
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MetadataList {
     #[serde(default, rename = "Metadata")]
@@ -151,6 +170,23 @@ impl ServerClient {
                 return Ok(items);
             }
         }
+    }
+
+    /// Search every library on the server for movies, shows, seasons and episodes.
+    /// `limit` caps results per kind.
+    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<Metadata>> {
+        let params = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("query", query)
+            .append_pair("limit", &limit.to_string())
+            .finish();
+        let env: Envelope<Hubs> = send(self.get(&format!("hubs/search?{params}"))?).await?;
+        Ok(env
+            .container
+            .hubs
+            .into_iter()
+            .flat_map(|hub| hub.metadata)
+            .filter(|m| SEARCHABLE_KINDS.contains(&m.kind.as_str()))
+            .collect())
     }
 
     /// Full details of one item, including its media files.

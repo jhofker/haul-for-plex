@@ -77,7 +77,7 @@ fn hint(server: &str, items: &[Metadata]) {
 }
 
 /// One-line description of an item, e.g. `Some Show - S01E02 - Title`.
-fn describe(m: &Metadata) -> String {
+pub fn describe(m: &Metadata) -> String {
     let year = |y: Option<u32>| y.map(|y| format!(" ({y})")).unwrap_or_default();
     match m.kind.as_str() {
         "show" => {

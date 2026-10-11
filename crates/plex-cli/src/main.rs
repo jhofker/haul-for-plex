@@ -1,6 +1,7 @@
 mod auth;
 mod browse;
 mod context;
+mod search;
 mod servers;
 mod table;
 
@@ -51,6 +52,17 @@ enum Command {
         /// Library name, or an item key from a previous listing.
         target: String,
     },
+    /// Search for movies, shows and episodes across your servers.
+    Search {
+        /// What to search for.
+        query: String,
+        /// Only search this server (name, start of name, or machine id).
+        #[arg(short, long)]
+        server: Option<String>,
+        /// Maximum results per type on each server.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Show where the config file lives and this install's Plex client id.
     Config,
 }
@@ -86,6 +98,19 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Ls { server, target } => {
             browse::ls(context::Context::load(store)?, &server, &target).await?
+        }
+        Command::Search {
+            query,
+            server,
+            limit,
+        } => {
+            search::search(
+                context::Context::load(store)?,
+                &query,
+                server.as_deref(),
+                limit,
+            )
+            .await?
         }
         Command::Config => {
             let config = store.load_or_init()?;
