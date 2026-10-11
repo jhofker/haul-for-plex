@@ -63,7 +63,7 @@ pub enum Error {
     )]
     SizeMismatch { expected: u64, actual: u64 },
 
-    #[error("{title:?} is a {kind}; only movies and episodes can be downloaded")]
+    #[error("{title:?} is a {kind}; only movies, episodes, seasons and shows can be downloaded")]
     NotDownloadable { title: String, kind: String },
 
     #[error("{0:?} has no media files")]

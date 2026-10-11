@@ -1,9 +1,12 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
-use plex_core::{Layout, Outcome};
+use futures_util::StreamExt;
+use futures_util::stream;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use plex_core::{Error, Layout, Outcome, PlannedFile};
 
 use crate::context::Context;
 use crate::table;
@@ -13,8 +16,17 @@ pub struct Options {
     pub key: String,
     pub movies_dir: Option<PathBuf>,
     pub tv_dir: Option<PathBuf>,
+    pub parallel: usize,
     pub dry_run: bool,
     pub force: bool,
+}
+
+#[derive(Default)]
+struct Tally {
+    downloaded: usize,
+    skipped: usize,
+    failed: usize,
+    not_attempted: usize,
 }
 
 pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
@@ -28,44 +40,88 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     };
     let files = client.plan_download(&item, &layout).await?;
 
+    let total: u64 = files.iter().filter_map(|f| f.part.size).sum();
     if opts.dry_run {
         for file in &files {
             let size = file.part.size.map(table::size).unwrap_or_default();
             println!("{}  {size}", file.dest.display());
         }
+        if files.len() > 1 {
+            println!("\n{} files, {}", files.len(), table::size(total));
+        }
         return Ok(());
+    }
+
+    let have = files.iter().filter(|f| already_complete(f)).count();
+    if files.len() > 1 {
+        println!(
+            "Downloading {} files ({}){}",
+            files.len(),
+            table::size(total),
+            if have > 0 {
+                format!(", {have} already present")
+            } else {
+                String::new()
+            }
+        );
     }
 
     let style = ProgressStyle::with_template(
         "{msg}\n{bar:40.cyan/blue} {bytes}/{total_bytes}  {bytes_per_sec}  ETA {eta}",
     )?;
-    let mut failed = false;
-    for file in &files {
-        let name = file
-            .dest
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let bar = ProgressBar::new(file.part.size.unwrap_or(0)).with_style(style.clone());
-        bar.set_message(name);
-        bar.enable_steady_tick(Duration::from_millis(250));
+    let multi = MultiProgress::new();
+    // Set when the server refuses downloads outright: the rest would fail too.
+    let refused = AtomicBool::new(false);
 
-        let result = client
-            .download_part(&file.part, &file.dest, opts.force, |p| {
-                if let Some(total) = p.total {
-                    bar.set_length(total);
+    let results: Vec<_> = stream::iter(&files)
+        .map(|file| {
+            let (client, multi, style, refused) = (&client, &multi, &style, &refused);
+            async move {
+                if refused.load(Ordering::Relaxed) {
+                    return (file, None);
                 }
-                bar.set_position(p.downloaded);
-            })
-            .await;
-        bar.finish_and_clear();
+                let bar = multi
+                    .add(ProgressBar::new(file.part.size.unwrap_or(0)).with_style(style.clone()));
+                bar.set_message(file_name(file));
+                bar.enable_steady_tick(Duration::from_millis(250));
+                let result = client
+                    .download_part(&file.part, &file.dest, opts.force, |p| {
+                        if let Some(total) = p.total {
+                            bar.set_length(total);
+                        }
+                        bar.set_position(p.downloaded);
+                    })
+                    .await;
+                bar.finish_and_clear();
+                multi.remove(&bar);
+                if matches!(result, Err(Error::DownloadForbidden(_))) {
+                    refused.store(true, Ordering::Relaxed);
+                }
+                (file, Some(result))
+            }
+        })
+        .buffer_unordered(opts.parallel.max(1))
+        .collect()
+        .await;
 
+    // Report in plan order rather than completion order.
+    let mut tally = Tally::default();
+    let mut failures = Vec::new();
+    for file in &files {
+        let Some((_, result)) = results.iter().find(|(f, _)| std::ptr::eq(*f, file)) else {
+            continue;
+        };
         match result {
-            Ok(Outcome::Skipped) => println!("Already have {}", file.dest.display()),
-            Ok(Outcome::Downloaded { resumed_from }) => {
+            None => tally.not_attempted += 1,
+            Some(Ok(Outcome::Skipped)) => {
+                tally.skipped += 1;
+                println!("Already have {}", file.dest.display());
+            }
+            Some(Ok(Outcome::Downloaded { resumed_from })) => {
+                tally.downloaded += 1;
                 let size = std::fs::metadata(&file.dest).map(|m| m.len()).unwrap_or(0);
-                let resumed = if resumed_from > 0 {
-                    format!(" (resumed from {})", table::size(resumed_from))
+                let resumed = if *resumed_from > 0 {
+                    format!(" (resumed from {})", table::size(*resumed_from))
                 } else {
                     String::new()
                 };
@@ -75,15 +131,48 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
                     table::size(size)
                 );
             }
-            Err(e) => {
-                eprintln!("error: {}: {e}", file.dest.display());
-                failed = true;
-                break;
+            Some(Err(e)) => {
+                tally.failed += 1;
+                failures.push(format!("{}: {e}", file.dest.display()));
             }
         }
     }
-    if failed {
-        anyhow::bail!("download did not finish");
+
+    if files.len() > 1 {
+        println!(
+            "\nDone: {} downloaded, {} already present, {} failed",
+            tally.downloaded, tally.skipped, tally.failed
+        );
+    }
+    for failure in &failures {
+        eprintln!("error: {failure}");
+    }
+    if tally.not_attempted > 0 {
+        eprintln!(
+            "{} files were not attempted because the server refused downloads",
+            tally.not_attempted
+        );
+    }
+    if tally.failed > 0 || tally.not_attempted > 0 {
+        anyhow::bail!(
+            "{} of {} files did not download",
+            tally.failed + tally.not_attempted,
+            files.len()
+        );
     }
     Ok(())
+}
+
+fn file_name(file: &PlannedFile) -> String {
+    file.dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn already_complete(file: &PlannedFile) -> bool {
+    match (std::fs::metadata(&file.dest), file.part.size) {
+        (Ok(meta), Some(size)) => meta.len() == size,
+        _ => false,
+    }
 }

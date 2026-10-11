@@ -49,6 +49,8 @@ pub struct Metadata {
     #[serde(default)]
     pub grandparent_year: Option<u32>,
     #[serde(default)]
+    pub parent_rating_key: Option<String>,
+    #[serde(default)]
     pub grandparent_rating_key: Option<String>,
     /// Name of the library the item is in; set on search results.
     #[serde(default)]

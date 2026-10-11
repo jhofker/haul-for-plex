@@ -64,7 +64,7 @@ enum Command {
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
     },
-    /// Download a movie or episode into the Plex-style folder layout.
+    /// Download a movie, episode, season or whole show into the Plex-style folder layout.
     ///
     /// Interrupted downloads resume where they left off when you run the
     /// same command again.
@@ -79,6 +79,9 @@ enum Command {
         /// Where TV episodes are saved.
         #[arg(long, env = "PLEX_GRABBER_TV_DIR", value_name = "DIR")]
         tv_dir: Option<std::path::PathBuf>,
+        /// How many files to download at once.
+        #[arg(short, long, default_value_t = 2, value_parser = clap::value_parser!(u16).range(1..=8))]
+        parallel: u16,
         /// Show where the files would be saved without downloading.
         #[arg(long)]
         dry_run: bool,
@@ -140,6 +143,7 @@ async fn run(cli: Cli) -> Result<()> {
             key,
             movies_dir,
             tv_dir,
+            parallel,
             dry_run,
             force,
         } => {
@@ -148,6 +152,7 @@ async fn run(cli: Cli) -> Result<()> {
                 key,
                 movies_dir,
                 tv_dir,
+                parallel: usize::from(parallel),
                 dry_run,
                 force,
             };

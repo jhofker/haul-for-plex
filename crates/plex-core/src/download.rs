@@ -46,65 +46,58 @@ pub enum Outcome {
 impl ServerClient {
     /// Work out which files `item` consists of and where each should be saved.
     ///
-    /// `item` must come from [`ServerClient::metadata`], which includes the
-    /// media files. When an item has several versions (e.g. 1080p and 4K), the
-    /// first is used.
+    /// Movies and episodes give their own files; a season or show expands to
+    /// all of its episodes, in order. `item` must come from
+    /// [`ServerClient::metadata`], which includes the media files. When an item
+    /// has several versions (e.g. 1080p and 4K), the first is used.
     pub async fn plan_download(
         &self,
         item: &Metadata,
         layout: &Layout,
     ) -> Result<Vec<PlannedFile>> {
-        if !item.is_playable() {
-            return Err(Error::NotDownloadable {
+        match item.kind.as_str() {
+            "movie" => plan_files(item, &layout.movies_dir, None),
+            "episode" => {
+                let show_year = self
+                    .show_year(item.grandparent_rating_key.as_deref())
+                    .await?;
+                plan_files(item, &layout.tv_dir, Some(show_year))
+            }
+            "show" | "season" => {
+                let (episodes, show_year) = if item.kind == "show" {
+                    (self.all_leaves(&item.rating_key).await?, item.year)
+                } else {
+                    (
+                        self.children(&item.rating_key).await?,
+                        self.show_year(item.parent_rating_key.as_deref()).await?,
+                    )
+                };
+                let mut files = Vec::new();
+                for episode in episodes.iter().filter(|e| e.kind == "episode") {
+                    // An episode without files can't be downloaded; skip it
+                    // rather than failing the whole season.
+                    if episode.media.first().is_some_and(|m| !m.parts.is_empty()) {
+                        files.extend(plan_files(episode, &layout.tv_dir, Some(show_year))?);
+                    }
+                }
+                if files.is_empty() {
+                    return Err(Error::NoMedia(item.title.clone()));
+                }
+                Ok(files)
+            }
+            _ => Err(Error::NotDownloadable {
                 title: item.title.clone(),
                 kind: item.kind.clone(),
-            });
+            }),
         }
-        let media = item
-            .media
-            .first()
-            .filter(|m| !m.parts.is_empty())
-            .ok_or_else(|| Error::NoMedia(item.title.clone()))?;
+    }
 
-        // An episode's own `year` is its air year; the folder uses the show's.
-        let (root, show) = if item.kind == "episode" {
-            let show_year = match &item.grandparent_rating_key {
-                Some(key) => self.metadata(key).await?.year,
-                None => None,
-            };
-            (&layout.tv_dir, Some(show_year))
-        } else {
-            (&layout.movies_dir, None)
-        };
-
-        let parts = media.parts.len();
-        Ok(media
-            .parts
-            .iter()
-            .enumerate()
-            .map(|(i, part)| {
-                let ext = part_extension(part, media.container.as_deref());
-                let relative = match show {
-                    Some(show_year) => naming::episode_path(
-                        &Episode {
-                            show: item.grandparent_title.as_deref().unwrap_or("Unknown Show"),
-                            show_year,
-                            season: item.parent_index,
-                            number: item.index,
-                            title: &item.title,
-                        },
-                        i + 1,
-                        parts,
-                        &ext,
-                    ),
-                    None => naming::movie_path(&item.title, item.year, i + 1, parts, &ext),
-                };
-                PlannedFile {
-                    part: part.clone(),
-                    dest: root.join(relative),
-                }
-            })
-            .collect())
+    /// The year a show started, from its record.
+    async fn show_year(&self, show_key: Option<&str>) -> Result<Option<u32>> {
+        match show_key {
+            Some(key) => Ok(self.metadata(key).await?.year),
+            None => Ok(None),
+        }
     }
 
     /// Download `part` to `dest`.
@@ -249,6 +242,47 @@ async fn file_len(path: &Path) -> Result<u64> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
         Err(e) => Err(Error::io(path, e)),
     }
+}
+
+/// Files for one movie or episode. `show_year` is `Some` for episodes.
+fn plan_files(
+    item: &Metadata,
+    root: &Path,
+    show_year: Option<Option<u32>>,
+) -> Result<Vec<PlannedFile>> {
+    let media = item
+        .media
+        .first()
+        .filter(|m| !m.parts.is_empty())
+        .ok_or_else(|| Error::NoMedia(item.title.clone()))?;
+    let parts = media.parts.len();
+    Ok(media
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(i, part)| {
+            let ext = part_extension(part, media.container.as_deref());
+            let relative = match show_year {
+                Some(show_year) => naming::episode_path(
+                    &Episode {
+                        show: item.grandparent_title.as_deref().unwrap_or("Unknown Show"),
+                        show_year,
+                        season: item.parent_index,
+                        number: item.index,
+                        title: &item.title,
+                    },
+                    i + 1,
+                    parts,
+                    &ext,
+                ),
+                None => naming::movie_path(&item.title, item.year, i + 1, parts, &ext),
+            };
+            PlannedFile {
+                part: part.clone(),
+                dest: root.join(relative),
+            }
+        })
+        .collect())
 }
 
 /// File extension for a part: its container, else the extension in its key.

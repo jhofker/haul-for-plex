@@ -399,12 +399,120 @@ async fn multi_part_movie_plans_every_part() {
     );
 }
 
+fn episode(
+    key: &str,
+    season: u32,
+    number: u32,
+    title: &str,
+    with_media: bool,
+) -> serde_json::Value {
+    let mut ep = json!({
+        "ratingKey": key, "type": "episode", "title": title, "year": 2010,
+        "index": number, "parentIndex": season,
+        "grandparentTitle": "Some Show", "grandparentRatingKey": "50",
+    });
+    if with_media {
+        ep["Media"] = json!([{"container": "mkv", "Part": [
+            {"id": 1, "key": format!("/library/parts/{key}/1/file.mkv"), "size": 10, "container": "mkv"}
+        ]}]);
+    }
+    ep
+}
+
 #[tokio::test]
-async fn shows_are_not_downloadable_yet() {
+async fn show_expands_to_every_episode_and_skips_those_without_files() {
+    let f = plan_server(vec![
+        (
+            "/library/metadata/50",
+            json!({"Metadata": [{
+                "ratingKey": "50", "type": "show", "title": "Some Show", "year": 2005,
+            }]}),
+        ),
+        (
+            "/library/metadata/50/allLeaves",
+            json!({"Metadata": [
+                episode("1", 1, 1, "Pilot", true),
+                episode("2", 1, 2, "Second", false),
+                episode("3", 2, 1, "Return", true),
+            ]}),
+        ),
+    ])
+    .await;
+
+    let item = f.client.metadata("50").await.unwrap();
+    let plan = f.client.plan_download(&item, &layout()).await.unwrap();
+    let dests: Vec<_> = plan.iter().map(|p| p.dest.clone()).collect();
+    assert_eq!(
+        dests,
+        [
+            Path::new("/t/Some Show (2005)/Season 01/Some Show - S01E01 - Pilot.mkv"),
+            Path::new("/t/Some Show (2005)/Season 02/Some Show - S02E01 - Return.mkv"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn season_expands_its_episodes_using_the_shows_year() {
+    let f = plan_server(vec![
+        (
+            "/library/metadata/51",
+            json!({"Metadata": [{
+                "ratingKey": "51", "type": "season", "title": "Season 1", "index": 1,
+                "parentRatingKey": "50", "parentTitle": "Some Show",
+            }]}),
+        ),
+        (
+            "/library/metadata/50",
+            json!({"Metadata": [{
+                "ratingKey": "50", "type": "show", "title": "Some Show", "year": 2005,
+            }]}),
+        ),
+        (
+            "/library/metadata/51/children",
+            json!({"Metadata": [
+                episode("1", 1, 1, "Pilot", true),
+                episode("2", 1, 2, "Second", true),
+            ]}),
+        ),
+    ])
+    .await;
+
+    let item = f.client.metadata("51").await.unwrap();
+    let plan = f.client.plan_download(&item, &layout()).await.unwrap();
+    assert_eq!(plan.len(), 2);
+    assert_eq!(
+        plan[1].dest,
+        Path::new("/t/Some Show (2005)/Season 01/Some Show - S01E02 - Second.mkv")
+    );
+}
+
+#[tokio::test]
+async fn show_with_no_downloadable_episodes_is_an_error() {
+    let f = plan_server(vec![
+        (
+            "/library/metadata/50",
+            json!({"Metadata": [{
+                "ratingKey": "50", "type": "show", "title": "Empty Show", "year": 2005,
+            }]}),
+        ),
+        (
+            "/library/metadata/50/allLeaves",
+            json!({"Metadata": [episode("1", 1, 1, "Pilot", false)]}),
+        ),
+    ])
+    .await;
+
+    let item = f.client.metadata("50").await.unwrap();
+    let err = f.client.plan_download(&item, &layout()).await.unwrap_err();
+    assert!(matches!(err, Error::NoMedia(_)));
+}
+
+#[tokio::test]
+async fn other_kinds_are_not_downloadable() {
     let f = plan_server(vec![(
         "/library/metadata/9",
         json!({"Metadata": [{
-            "ratingKey": "9", "type": "show", "title": "Some Show",
+            "ratingKey": "9", "type": "artist", "title": "Some Band",
         }]}),
     )])
     .await;
