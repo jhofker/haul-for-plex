@@ -205,6 +205,18 @@ fn item_title(m: &Metadata) -> String {
     }
 }
 
+/// The show an episode or season belongs to: its rating key (if known) and title.
+fn parent_show(m: &Metadata) -> Option<(Option<&str>, &str)> {
+    match m.kind.as_str() {
+        "episode" => Some((
+            m.grandparent_rating_key.as_deref(),
+            m.grandparent_title.as_deref()?,
+        )),
+        "season" => Some((m.parent_rating_key.as_deref(), m.parent_title.as_deref()?)),
+        _ => None,
+    }
+}
+
 fn item_detail(m: &Metadata) -> String {
     match m.kind.as_str() {
         "show" => match (m.child_count, m.leaf_count) {
@@ -229,7 +241,9 @@ fn cover(server_id: &str, m: &Metadata, large: bool) -> Markup {
     }
 }
 
-fn items_table(server_id: &str, items: &[Metadata]) -> Markup {
+/// `context` adds the show an episode or season belongs to (for search results,
+/// where items aren't listed under their show).
+fn items_table(server_id: &str, items: &[Metadata], context: bool) -> Markup {
     html! {
         @if items.is_empty() {
             p.empty { "Nothing here." }
@@ -244,7 +258,22 @@ fn items_table(server_id: &str, items: &[Metadata]) -> Markup {
                                     @if matches!(m.kind.as_str(), "movie" | "show" | "season") {
                                         (cover(server_id, m, false))
                                     }
-                                    a href={"/servers/" (server_id) "/items/" (m.rating_key)} { (item_title(m)) }
+                                    div {
+                                        a href={"/servers/" (server_id) "/items/" (m.rating_key)} { (item_title(m)) }
+                                        @if context {
+                                            @if let Some((key, name)) = parent_show(m) {
+                                                div.muted {
+                                                    "from "
+                                                    @if let Some(key) = key {
+                                                        a href={"/servers/" (server_id) "/items/" (key)} { (name) }
+                                                    } @else { (name) }
+                                                    @if m.kind == "episode" {
+                                                        @if let Some(season) = m.parent_index { " · Season " (season) }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             td { span.badge { (m.kind) } }
@@ -282,7 +311,7 @@ pub fn library_page(
             }
             h1 { (library_title) }
             p.muted { (total) " items" }
-            (items_table(&server.client_identifier, items))
+            (items_table(&server.client_identifier, items, false))
             @if pages > 1 {
                 div.pager {
                     @if page > 1 { a href={(base) "?page=" (page - 1)} { "← Previous" } }
@@ -346,7 +375,7 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
                 (media_card(i, p.item.media.len(), media))
             }
 
-            @if !p.children.is_empty() { (items_table(id, p.children)) }
+            @if !p.children.is_empty() { (items_table(id, p.children, false)) }
         },
     )
 }
@@ -601,7 +630,7 @@ pub fn search_page(user: &str, query: &str, results: Option<SearchResults<'_>>) 
                 @for (server, items) in results.found {
                     @if !items.is_empty() {
                         h2 { (server.name) }
-                        (items_table(&server.client_identifier, items))
+                        (items_table(&server.client_identifier, items, true))
                     }
                 }
             }
