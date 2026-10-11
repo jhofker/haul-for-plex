@@ -64,8 +64,52 @@ pub struct Metadata {
     /// Number of seasons under a show.
     #[serde(default)]
     pub child_count: Option<u32>,
+    /// Plot summary.
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub tagline: Option<String>,
+    /// Runtime in milliseconds.
+    #[serde(default)]
+    pub duration: Option<u64>,
+    /// Age rating such as `PG-13`.
+    #[serde(default)]
+    pub content_rating: Option<String>,
+    /// Critic rating, 0-10.
+    #[serde(default)]
+    pub rating: Option<f64>,
+    /// Audience rating, 0-10.
+    #[serde(default)]
+    pub audience_rating: Option<f64>,
+    #[serde(default)]
+    pub studio: Option<String>,
+    /// Release / air date, `YYYY-MM-DD`.
+    #[serde(default)]
+    pub originally_available_at: Option<String>,
+    /// When the item was added to the library (unix seconds).
+    #[serde(default)]
+    pub added_at: Option<i64>,
+    #[serde(default, rename = "Genre")]
+    pub genres: Vec<Tag>,
+    #[serde(default, rename = "Director")]
+    pub directors: Vec<Tag>,
+    #[serde(default, rename = "Writer")]
+    pub writers: Vec<Tag>,
+    #[serde(default, rename = "Country")]
+    pub countries: Vec<Tag>,
+    #[serde(default, rename = "Role")]
+    pub roles: Vec<Tag>,
     #[serde(default, rename = "Media")]
     pub media: Vec<Media>,
+}
+
+/// A genre, person or country attached to an item.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Tag {
+    pub tag: String,
+    /// Character name, on cast entries.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 impl Metadata {
@@ -91,6 +135,28 @@ pub struct Media {
     pub video_resolution: Option<String>,
     #[serde(default)]
     pub video_codec: Option<String>,
+    #[serde(default)]
+    pub video_profile: Option<String>,
+    #[serde(default)]
+    pub video_frame_rate: Option<String>,
+    #[serde(default)]
+    pub audio_codec: Option<String>,
+    #[serde(default)]
+    pub audio_profile: Option<String>,
+    #[serde(default)]
+    pub audio_channels: Option<u32>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub aspect_ratio: Option<f64>,
+    /// Overall bitrate in kbps.
+    #[serde(default)]
+    pub bitrate: Option<u64>,
+    /// Runtime in milliseconds.
+    #[serde(default)]
+    pub duration: Option<u64>,
     #[serde(default, rename = "Part")]
     pub parts: Vec<Part>,
 }
@@ -109,6 +175,48 @@ pub struct Part {
     pub size: Option<u64>,
     #[serde(default)]
     pub container: Option<String>,
+    #[serde(default)]
+    pub duration: Option<u64>,
+    /// Video, audio and subtitle streams in the file.
+    #[serde(default, rename = "Stream")]
+    pub streams: Vec<Stream>,
+}
+
+/// One video, audio or subtitle stream inside a file.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stream {
+    /// 1 = video, 2 = audio, 3 = subtitle.
+    pub stream_type: u8,
+    #[serde(default)]
+    pub codec: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Plex's own summary, e.g. `English (DTS-HD MA 5.1)`.
+    #[serde(default)]
+    pub display_title: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    /// kbps.
+    #[serde(default)]
+    pub bitrate: Option<u64>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub frame_rate: Option<f64>,
+    #[serde(default)]
+    pub bit_depth: Option<u32>,
+    #[serde(default)]
+    pub channels: Option<u32>,
+    #[serde(default)]
+    pub color_space: Option<String>,
+    /// Set on subtitle streams that are external files or forced.
+    #[serde(default)]
+    pub forced: Option<bool>,
+    #[serde(default)]
+    pub default: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -133,6 +241,35 @@ struct Hubs {
 struct Hub {
     #[serde(default, rename = "Metadata")]
     metadata: Vec<Metadata>,
+}
+
+/// Lowercase letters and digits only, so "Spider-Man" and "spiderman" compare equal.
+fn compact(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn tokens(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(compact)
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Plex's search is fuzzy and also matches summaries and cast; keep only items
+/// whose title (or show/season title for episodes) contains every query word.
+fn matches_title(m: &Metadata, tokens: &[String]) -> bool {
+    let mut haystack = compact(&m.title);
+    for extra in [&m.parent_title, &m.grandparent_title]
+        .into_iter()
+        .flatten()
+    {
+        haystack.push_str(&compact(extra));
+    }
+    tokens.iter().all(|t| haystack.contains(t.as_str()))
 }
 
 /// Item kinds search returns; music, photos and people are left out since
@@ -202,13 +339,30 @@ impl ServerClient {
             .append_pair("limit", &limit.to_string())
             .finish();
         let env: Envelope<Hubs> = send(self.get(&format!("hubs/search?{params}"))?).await?;
-        Ok(env
+        let tokens = tokens(query);
+        let mut seen = std::collections::HashSet::new();
+        let mut found: Vec<Metadata> = env
             .container
             .hubs
             .into_iter()
             .flat_map(|hub| hub.metadata)
             .filter(|m| SEARCHABLE_KINDS.contains(&m.kind.as_str()))
-            .collect())
+            .filter(|m| seen.insert(m.rating_key.clone()))
+            .filter(|m| matches_title(m, &tokens))
+            .collect();
+        // Exact title first, then titles starting with the query, then the rest.
+        let whole = compact(query);
+        found.sort_by_key(|m| {
+            let t = compact(&m.title);
+            if t == whole {
+                0
+            } else if t.starts_with(&whole) {
+                1
+            } else {
+                2
+            }
+        });
+        Ok(found)
     }
 
     /// Full details of one item, including its media files.
@@ -239,5 +393,26 @@ impl ServerClient {
         let env: Envelope<MetadataList> =
             send(self.get(&format!("library/metadata/{rating_key}/allLeaves"))?).await?;
         Ok(env.container.metadata)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(title: &str) -> Metadata {
+        serde_json::from_value(serde_json::json!({
+            "ratingKey": "1", "type": "movie", "title": title
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn title_match_ignores_punctuation_and_requires_all_words() {
+        let t = tokens("spider man");
+        assert!(matches_title(&item("Spider-Man: Homecoming"), &t));
+        assert!(!matches_title(&item("Suits"), &tokens("hackers")));
+        assert!(matches_title(&item("Hackers"), &tokens("HACKERS")));
+        assert!(!matches_title(&item("Spider-Man"), &tokens("spider verse")));
     }
 }

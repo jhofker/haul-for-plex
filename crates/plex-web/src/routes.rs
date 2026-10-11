@@ -261,7 +261,13 @@ async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>)
         let id = s.client_identifier.clone();
         async move {
             let (resource, client) = state.server(&id).await?;
-            let items: Vec<Metadata> = client.search(q, 20).await?;
+            let items: Vec<Metadata> =
+                tokio::time::timeout(std::time::Duration::from_secs(10), client.search(q, 20))
+                    .await
+                    .map_err(|_| Error::Unreachable {
+                        server: id.clone(),
+                        attempts: vec![("search".into(), "timed out".into())],
+                    })??;
             Ok::<_, Error>((resource, items))
         }
     }))

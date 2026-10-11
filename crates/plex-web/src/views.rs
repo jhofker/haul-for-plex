@@ -1,6 +1,7 @@
 //! HTML pages, built with maud (which escapes everything interpolated).
 
 use maud::{DOCTYPE, Markup, html};
+use plex_core::library::{Media, Part, Stream, Tag};
 use plex_core::plextv::{Connection, Resource};
 use plex_core::{Library, Metadata, PlannedFile, format_size};
 
@@ -301,6 +302,7 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
             }
             h1 { (item_title(p.item)) }
             p { span.badge { (p.item.kind) } " " span.muted { (item_detail(p.item)) } }
+            (about(p.item))
 
             @if !p.plan.is_empty() {
                 div.card {
@@ -318,9 +320,234 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
                 }
             }
 
+            @for (i, media) in p.item.media.iter().enumerate() {
+                (media_card(i, p.item.media.len(), media))
+            }
+
             @if !p.children.is_empty() { (items_table(id, p.children)) }
         },
     )
+}
+
+fn duration(ms: u64) -> String {
+    let mins = ms / 60_000;
+    if mins >= 60 {
+        format!("{}h {:02}m", mins / 60, mins % 60)
+    } else {
+        format!("{mins}m")
+    }
+}
+
+fn tag_list(tags: &[Tag], limit: usize) -> String {
+    tags.iter()
+        .take(limit)
+        .map(|t| t.tag.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Summary and facts about the item itself (not its files).
+fn about(m: &Metadata) -> Markup {
+    let mut facts: Vec<(&str, String)> = Vec::new();
+    let mut add = |label: &'static str, value: Option<String>| {
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            facts.push((label, v));
+        }
+    };
+    add("Released", m.originally_available_at.clone());
+    add("Runtime", m.duration.filter(|d| *d > 0).map(duration));
+    add("Rated", m.content_rating.clone());
+    add(
+        "Rating",
+        match (m.rating, m.audience_rating) {
+            (Some(c), Some(a)) => Some(format!("critics {c:.1} · audience {a:.1}")),
+            (Some(r), None) | (None, Some(r)) => Some(format!("{r:.1}")),
+            _ => None,
+        },
+    );
+    add("Genres", Some(tag_list(&m.genres, 10)));
+    add("Directors", Some(tag_list(&m.directors, 5)));
+    add("Writers", Some(tag_list(&m.writers, 5)));
+    add(
+        "Cast",
+        Some(
+            m.roles
+                .iter()
+                .take(10)
+                .map(|r| match r.role.as_deref().filter(|s| !s.is_empty()) {
+                    Some(role) => format!("{} ({role})", r.tag),
+                    None => r.tag.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    );
+    add("Studio", m.studio.clone());
+    add("Country", Some(tag_list(&m.countries, 5)));
+    add("Added", m.added_at.filter(|t| *t > 0).map(unix_date));
+    html! {
+        @if let Some(tagline) = m.tagline.as_deref().filter(|t| !t.is_empty()) {
+            p.muted { em { (tagline) } }
+        }
+        @if let Some(summary) = m.summary.as_deref().filter(|t| !t.is_empty()) {
+            p { (summary) }
+        }
+        @if !facts.is_empty() {
+            dl.facts {
+                @for (label, value) in &facts { dt { (label) } dd { (value) } }
+            }
+        }
+    }
+}
+
+/// `YYYY-MM-DD` from unix seconds (UTC), without pulling in a date crate.
+fn unix_date(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    // Civil-from-days (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn stream_kind(t: u8) -> &'static str {
+    match t {
+        1 => "Video",
+        2 => "Audio",
+        3 => "Subtitle",
+        _ => "Other",
+    }
+}
+
+fn stream_summary(s: &Stream) -> String {
+    let mut bits: Vec<String> = Vec::new();
+    if let Some(t) = s.display_title.as_deref().filter(|t| !t.is_empty()) {
+        bits.push(t.to_string());
+    }
+    match s.stream_type {
+        1 => {
+            if let (Some(w), Some(h)) = (s.width, s.height) {
+                bits.push(format!("{w}×{h}"));
+            }
+            if let Some(f) = s.frame_rate {
+                bits.push(format!("{f:.3} fps").replace(".000", ""));
+            }
+            if let Some(b) = s.bit_depth {
+                bits.push(format!("{b}-bit"));
+            }
+            if let Some(c) = s.color_space.as_deref() {
+                bits.push(c.to_string());
+            }
+        }
+        2 => {
+            if let Some(c) = s.channels {
+                bits.push(format!("{c} ch"));
+            }
+        }
+        _ => {}
+    }
+    if s.forced == Some(true) {
+        bits.push("forced".into());
+    }
+    if s.default == Some(true) {
+        bits.push("default".into());
+    }
+    bits.join(" · ")
+}
+
+fn media_card(index: usize, count: usize, m: &Media) -> Markup {
+    let mut facts: Vec<(&str, String)> = Vec::new();
+    let mut add = |label: &'static str, value: Option<String>| {
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            facts.push((label, v));
+        }
+    };
+    add(
+        "Resolution",
+        match (m.width, m.height, m.video_resolution.as_deref()) {
+            (Some(w), Some(h), Some(r)) => Some(format!("{w}×{h} ({r})")),
+            (Some(w), Some(h), None) => Some(format!("{w}×{h}")),
+            (_, _, r) => r.map(str::to_string),
+        },
+    );
+    add(
+        "Video",
+        m.video_codec
+            .as_ref()
+            .map(|c| match m.video_profile.as_deref() {
+                Some(p) if !p.is_empty() => format!("{c} ({p})"),
+                _ => c.clone(),
+            }),
+    );
+    add("Frame rate", m.video_frame_rate.clone());
+    add("Aspect ratio", m.aspect_ratio.map(|a| format!("{a:.2}:1")));
+    add(
+        "Audio",
+        m.audio_codec
+            .as_ref()
+            .map(|c| match (m.audio_profile.as_deref(), m.audio_channels) {
+                (Some(p), Some(ch)) if !p.is_empty() => format!("{c} ({p}) · {ch} ch"),
+                (_, Some(ch)) => format!("{c} · {ch} ch"),
+                _ => c.clone(),
+            }),
+    );
+    add(
+        "Bitrate",
+        m.bitrate.map(|b| format!("{:.1} Mbps", b as f64 / 1000.0)),
+    );
+    add("Container", m.container.clone());
+    add("Duration", m.duration.filter(|d| *d > 0).map(duration));
+    let total: u64 = m.parts.iter().filter_map(|p| p.size).sum();
+    add("Size", (total > 0).then(|| format_size(total)));
+    html! {
+        div.card {
+            h2 {
+                "File"
+                @if count > 1 { " " (index + 1) " of " (count) }
+            }
+            @if !facts.is_empty() {
+                dl.facts {
+                    @for (label, value) in &facts { dt { (label) } dd { (value) } }
+                }
+            }
+            @for (i, part) in m.parts.iter().enumerate() {
+                (part_block(i, m.parts.len(), part))
+            }
+        }
+    }
+}
+
+fn part_block(index: usize, count: usize, p: &Part) -> Markup {
+    html! {
+        @if count > 1 { h3 { "Part " (index + 1) " of " (count) } }
+        @if let Some(file) = p.file.as_deref() {
+            div.muted { "On server" }
+            div.path { (file) }
+        }
+        @if let Some(size) = p.size { p.muted { (format_size(size)) } }
+        @if !p.streams.is_empty() {
+            table.streams {
+                thead { tr { th { "Stream" } th { "Codec" } th { "Language" } th { "Details" } th { "Bitrate" } } }
+                tbody {
+                    @for s in &p.streams {
+                        tr {
+                            td { (stream_kind(s.stream_type)) }
+                            td { (s.codec.as_deref().unwrap_or("")) @if let Some(pr) = s.profile.as_deref().filter(|p| !p.is_empty()) { " " span.muted { "(" (pr) ")" } } }
+                            td { (s.language.as_deref().unwrap_or("")) }
+                            td { (stream_summary(s)) }
+                            td { @if let Some(b) = s.bitrate { (b) " kbps" } }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct SearchResults<'a> {
@@ -336,10 +563,14 @@ pub fn search_page(user: &str, query: &str, results: Option<SearchResults<'_>>) 
         Some(user),
         html! {
             h1 { "Search" }
-            form.row method="get" action="/search" {
+            form.row method="get" action="/search"
+                hx-get="/search" hx-target="#results" hx-select="#results" hx-swap="outerHTML"
+                hx-push-url="true" hx-indicator="#search-spinner" hx-disabled-elt="find button" {
                 input type="search" name="q" value=(query) placeholder="Movie or show title" autofocus;
                 button.primary type="submit" { "Search" }
+                span.spinner #search-spinner role="status" aria-label="Searching" {}
             }
+            div #results {
             @if let Some(results) = results {
                 @for name in results.skipped { p.muted { "Skipped " (name) " (unreachable)" } }
                 @if results.found.iter().all(|(_, items)| items.is_empty()) {
@@ -351,6 +582,7 @@ pub fn search_page(user: &str, query: &str, results: Option<SearchResults<'_>>) 
                         (items_table(&server.client_identifier, items))
                     }
                 }
+            }
             }
         },
     )

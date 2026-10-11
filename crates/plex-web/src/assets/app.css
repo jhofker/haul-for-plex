@@ -49,3 +49,12 @@ progress { width: 100%; height: .6rem; accent-color: var(--accent); }
 .path { font-family: ui-monospace, monospace; font-size: .85rem; word-break: break-all; }
 .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
 @media (max-width: 40rem) { th:nth-child(n+4), td:nth-child(n+4) { display: none; } }
+.spinner { display: none; width: 1.1rem; height: 1.1rem; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.spinner.htmx-request { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: .5rem 0 1rem; }
+dl.facts dt { color: var(--muted); }
+dl.facts dd { margin: 0; }
+h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
+h3 { font-size: .95rem; margin: 1rem 0 .25rem; }
+table.streams { margin-top: .75rem; }
