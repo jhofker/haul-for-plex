@@ -22,6 +22,15 @@ pub struct Options {
     pub json: bool,
 }
 
+/// Movie and TV folders, defaulting to `./downloads/Movies` and `./downloads/TV Shows`.
+pub fn layout(movies_dir: Option<PathBuf>, tv_dir: Option<PathBuf>) -> Layout {
+    let downloads = PathBuf::from("downloads");
+    Layout {
+        movies_dir: movies_dir.unwrap_or_else(|| downloads.join("Movies")),
+        tv_dir: tv_dir.unwrap_or_else(|| downloads.join("TV Shows")),
+    }
+}
+
 #[derive(Default)]
 struct Tally {
     downloaded: usize,
@@ -34,11 +43,7 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     let client = ctx.server(&opts.server).await?;
     let item = client.metadata(&opts.key).await?;
 
-    let downloads = PathBuf::from("downloads");
-    let layout = Layout {
-        movies_dir: opts.movies_dir.unwrap_or_else(|| downloads.join("Movies")),
-        tv_dir: opts.tv_dir.unwrap_or_else(|| downloads.join("TV Shows")),
-    };
+    let layout = layout(opts.movies_dir, opts.tv_dir);
     let files = client.plan_download(&item, &layout).await?;
 
     let total: u64 = files.iter().filter_map(|f| f.part.size).sum();

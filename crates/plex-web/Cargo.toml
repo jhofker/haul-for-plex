@@ -1,0 +1,23 @@
+[package]
+name = "plex-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+plex-core.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+futures-util.workspace = true
+maud.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
+wiremock.workspace = true

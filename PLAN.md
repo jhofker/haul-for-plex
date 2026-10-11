@@ -82,10 +82,15 @@ All requests send `Accept: application/json` and the standard `X-Plex-*` headers
    (linux x86_64/aarch64, macOS x86_64/aarch64, windows x86_64) ✅, Dockerfile +
    GHCR publish workflow (volumes: `/config`, `/movies`, `/tv`) ✅.
 
-## Phase 2: Web
+## Phase 2: Web ✅
 
-- axum server (`plex-grabber serve`, or a separate `plex-web` binary).
-- PIN login in the browser; token stored in the same config file.
-- Pages: servers → libraries → items, plus search.
-- "Download" button enqueues to an in-memory queue; progress via htmx polling/SSE.
-- Single user: optional basic-auth/shared password in front of the UI.
+- `plex-grabber serve` runs an axum + maud + htmx server (htmx is vendored and
+  embedded, so it works offline). `plex-web` is a library crate used by the CLI,
+  so there is still one binary and one image.
+- PIN login in the browser; the token goes in the same config file as the CLI.
+- Pages: servers → libraries (paged) → items → seasons/episodes, search across
+  servers, downloads queue with live progress, cancel and clear.
+- Optional password (HTTP basic auth) and CSRF protection on every POST
+  (`Sec-Fetch-Site` / `Origin` check). Warns when listening beyond localhost
+  without a password.
+- Not built: poster art (needs a thumbnail proxy), a persistent queue.

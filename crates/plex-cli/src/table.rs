@@ -22,18 +22,7 @@ pub fn print<const N: usize>(headers: [&str; N], rows: &[[String; N]]) {
 
 /// Format a byte count as e.g. `1.4 GB`.
 pub fn size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+    plex_core::format_size(bytes)
 }
 
 #[cfg(test)]

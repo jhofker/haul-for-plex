@@ -13,5 +13,7 @@ ENV PLEX_GRABBER_CONFIG_DIR=/config \
     PLEX_GRABBER_TV_DIR=/tv
 VOLUME ["/config", "/movies", "/tv"]
 
+# The web interface; run other commands with `docker run ... plex-grabber <command>`.
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/plex-grabber"]
-CMD ["--help"]
+CMD ["serve", "--bind", "0.0.0.0:8080"]

@@ -94,6 +94,24 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Run the web interface.
+    Serve {
+        /// Address to listen on. Use 0.0.0.0:8080 to allow other machines.
+        #[arg(long, env = "PLEX_GRABBER_BIND", default_value = "127.0.0.1:8080")]
+        bind: std::net::SocketAddr,
+        /// Require this password (any username) to use the interface.
+        #[arg(long, env = "PLEX_GRABBER_WEB_PASSWORD", hide_env_values = true)]
+        password: Option<String>,
+        /// Where movies are saved.
+        #[arg(long, env = "PLEX_GRABBER_MOVIES_DIR", value_name = "DIR")]
+        movies_dir: Option<std::path::PathBuf>,
+        /// Where TV episodes are saved.
+        #[arg(long, env = "PLEX_GRABBER_TV_DIR", value_name = "DIR")]
+        tv_dir: Option<std::path::PathBuf>,
+        /// How many files to download at once.
+        #[arg(short, long, default_value_t = 2, value_parser = clap::value_parser!(u16).range(1..=8))]
+        parallel: u16,
+    },
     /// Show where the config file lives and this install's Plex client id.
     Config,
 }
@@ -164,6 +182,23 @@ async fn run(cli: Cli) -> Result<()> {
                 json: cli.json,
             };
             download::run(context::Context::load(store)?, options).await?
+        }
+        Command::Serve {
+            bind,
+            password,
+            movies_dir,
+            tv_dir,
+            parallel,
+        } => {
+            let settings = plex_web::Settings {
+                store,
+                layout: download::layout(movies_dir, tv_dir),
+                password: password.filter(|p| !p.is_empty()),
+                parallel: usize::from(parallel),
+                // Undocumented: lets the web UI be tested against a fake plex.tv.
+                plextv_url: std::env::var("PLEX_GRABBER_PLEX_TV_URL").ok(),
+            };
+            plex_web::serve(bind, settings).await?
         }
         Command::Config => {
             let config = store.load_or_init()?;
