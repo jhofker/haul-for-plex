@@ -49,6 +49,9 @@ pub enum Error {
     #[error("{query:?} matches several servers: {}; be more specific", .matches.join(", "))]
     AmbiguousServer { query: String, matches: Vec<String> },
 
+    #[error("no item with key {0} on this server")]
+    ItemNotFound(String),
+
     #[error("not logged in; run `plex-grabber login` first")]
     NotLoggedIn,
 }

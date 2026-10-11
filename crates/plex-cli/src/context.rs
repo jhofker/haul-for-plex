@@ -21,13 +21,27 @@ impl Context {
     }
 
     pub fn plextv(&self) -> Result<PlexTvClient> {
-        Ok(PlexTvClient::new(self.info.clone())?.with_token(self.config.token()?))
+        // Undocumented override so the CLI can be exercised against a fake plex.tv.
+        let client = match std::env::var("PLEX_GRABBER_PLEX_TV_URL") {
+            Ok(url) => PlexTvClient::with_base_url(self.info.clone(), &url)?,
+            Err(_) => PlexTvClient::new(self.info.clone())?,
+        };
+        Ok(client.with_token(self.config.token()?))
     }
 
     /// Connect to `server`, starting from its cached connection.
     pub async fn connect(&self, server: &Resource) -> plex_core::Result<ServerClient> {
         let cached = self.config.connections.get(&server.client_identifier);
         ServerClient::connect(server, &self.info, cached.map(String::as_str)).await
+    }
+
+    /// Find a server by name or id and connect to it.
+    pub async fn server(&mut self, query: &str) -> Result<ServerClient> {
+        let servers = self.plextv()?.servers().await?;
+        let server = plex_core::find_server(&servers, query)?;
+        let client = self.connect(server).await?;
+        self.remember([(server, &client)])?;
+        Ok(client)
     }
 
     /// Remember the connections that worked so the next run skips probing.

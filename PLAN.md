@@ -73,7 +73,7 @@ All requests send `Accept: application/json` and the standard `X-Plex-*` headers
 1. Workspace skeleton, config storage, plex.tv client types. ✅
 2. `login`, `logout`, `whoami`. ✅
 3. `servers`, with connection probing. ✅
-4. `libraries <server>`, `ls <server> <library|key>`.
+4. `libraries <server>`, `ls <server> <library|key>`. ✅
 5. `search "<query>" [--server]`.
 6. `download <server> <key>`: single file, progress bar, resume, layout naming.
 7. Season/show downloads, `--parallel N`.

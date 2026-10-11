@@ -1,6 +1,8 @@
 mod auth;
+mod browse;
 mod context;
 mod servers;
+mod table;
 
 use std::process::ExitCode;
 
@@ -37,6 +39,18 @@ enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// List the libraries on a server.
+    Libraries {
+        /// Server name (or the start of it) or machine id.
+        server: String,
+    },
+    /// List a library's items, a show's seasons, a season's episodes, or an item's files.
+    Ls {
+        /// Server name (or the start of it) or machine id.
+        server: String,
+        /// Library name, or an item key from a previous listing.
+        target: String,
+    },
     /// Show where the config file lives and this install's Plex client id.
     Config,
 }
@@ -66,6 +80,12 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Whoami => auth::whoami(&store).await?,
         Command::Servers { verbose } => {
             servers::list(context::Context::load(store)?, verbose).await?
+        }
+        Command::Libraries { server } => {
+            browse::libraries(context::Context::load(store)?, &server).await?
+        }
+        Command::Ls { server, target } => {
+            browse::ls(context::Context::load(store)?, &server, &target).await?
         }
         Command::Config => {
             let config = store.load_or_init()?;

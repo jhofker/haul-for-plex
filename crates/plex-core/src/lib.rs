@@ -2,11 +2,13 @@
 
 pub mod config;
 pub mod error;
+pub mod library;
 pub mod plextv;
 pub mod server;
 
 pub use config::{Auth, Config, ConfigStore};
 pub use error::{Error, Result};
+pub use library::{Library, Media, Metadata, Part};
 pub use plextv::{ClientInfo, PlexTvClient, Resource};
 pub use server::{ServerClient, find_server};
 

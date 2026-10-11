@@ -3,6 +3,7 @@ use futures_util::future::join_all;
 use plex_core::Error;
 
 use crate::context::Context;
+use crate::table;
 
 pub async fn list(mut ctx: Context, verbose: bool) -> Result<()> {
     let servers = ctx.plextv()?.servers().await?;
@@ -45,7 +46,7 @@ pub async fn list(mut ctx: Context, verbose: bool) -> Result<()> {
             ]
         })
         .collect();
-    print_table(["NAME", "OWNER", "VERSION", "CONNECTION"], &rows);
+    table::print(["NAME", "OWNER", "VERSION", "CONNECTION"], &rows);
 
     if verbose {
         for (server, result) in servers.iter().zip(&results) {
@@ -64,25 +65,4 @@ pub async fn list(mut ctx: Context, verbose: bool) -> Result<()> {
             .filter_map(|(s, r)| r.as_ref().ok().map(|c| (s, c))),
     )?;
     Ok(())
-}
-
-fn print_table<const N: usize>(headers: [&str; N], rows: &[[String; N]]) {
-    let mut widths = headers.map(|h| h.chars().count());
-    for row in rows {
-        for (w, cell) in widths.iter_mut().zip(row) {
-            *w = (*w).max(cell.chars().count());
-        }
-    }
-    let line = |cells: Vec<&str>| {
-        let padded: Vec<String> = cells
-            .iter()
-            .zip(widths)
-            .map(|(c, w)| format!("{c:<w$}"))
-            .collect();
-        println!("{}", padded.join("  ").trim_end());
-    };
-    line(headers.to_vec());
-    for row in rows {
-        line(row.iter().map(String::as_str).collect());
-    }
 }

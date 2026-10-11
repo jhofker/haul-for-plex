@@ -225,7 +225,9 @@ impl PlexTvClient {
     }
 }
 
-async fn send<T: serde::de::DeserializeOwned>(req: reqwest::RequestBuilder) -> Result<T> {
+pub(crate) async fn send<T: serde::de::DeserializeOwned>(
+    req: reqwest::RequestBuilder,
+) -> Result<T> {
     let resp = req.send().await?;
     let status = resp.status();
     if !status.is_success() {

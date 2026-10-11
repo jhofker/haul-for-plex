@@ -119,7 +119,6 @@ impl ServerClient {
         &self.reachable
     }
 
-    #[allow(dead_code)] // used by the browse/download milestones
     pub(crate) fn get(&self, path: &str) -> Result<reqwest::RequestBuilder> {
         Ok(self
             .http
