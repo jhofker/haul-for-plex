@@ -1,10 +1,10 @@
 name: Docker
 
-# Publishes a multi-arch image to GitHub Container Registry: `latest` from
-# main and `vX.Y.Z` from version tags.
+# Publishes a multi-arch image to GitHub Container Registry, only for version
+# tags: v1.2.3 becomes `1.2.3`, `1.2` and `latest`. Pre-releases (v1.2.3-rc1)
+# get only their own tag. Pushes to main are build-checked by ci.yml instead.
 on:
   push:
-    branches: [main]
     tags: ["v*"]
 
 permissions:
@@ -28,8 +28,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - uses: docker/build-push-action@v6
         with:
           context: .

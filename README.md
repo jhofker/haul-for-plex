@@ -19,7 +19,8 @@ macOS and Windows).
 
 **From source:** `cargo install --path crates/plex-cli` (installs `plex-grabber`).
 
-**Docker:** `docker pull ghcr.io/jhofker/plex-grabber`
+**Docker:** `docker pull ghcr.io/jhofker/plex-grabber` (`latest` is the newest
+release; pin `0.1` or `0.1.0` to stay on a version)
 
 ## Command line
 
