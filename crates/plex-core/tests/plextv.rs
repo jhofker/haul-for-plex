@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use plex_core::{ClientInfo, Error, PlexTvClient};
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -113,4 +115,75 @@ async fn http_errors_include_status() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+fn pin_body(token: Option<&str>) -> ResponseTemplate {
+    let mut pin: serde_json::Value = serde_json::from_str(&fixture("pin.json")).unwrap();
+    pin["authToken"] = token.into();
+    ResponseTemplate::new(200).set_body_json(pin)
+}
+
+#[tokio::test]
+async fn wait_for_pin_polls_until_approved() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/pins/12345"))
+        .respond_with(pin_body(None))
+        .up_to_n_times(2)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/pins/12345"))
+        .respond_with(pin_body(Some("new-token")))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+
+    let plex = client(&server).await;
+    let pin: plex_core::plextv::Pin = serde_json::from_str(&fixture("pin.json")).unwrap();
+    assert_eq!(pin.expires_in, Some(1800));
+    let token = plex
+        .wait_for_pin(&pin, Duration::from_millis(10))
+        .await
+        .unwrap();
+    assert_eq!(token, "new-token");
+    assert_eq!(server.received_requests().await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn wait_for_pin_reports_expiry() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/pins/12345"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let plex = client(&server).await;
+    let pin: plex_core::plextv::Pin = serde_json::from_str(&fixture("pin.json")).unwrap();
+    let err = plex
+        .wait_for_pin(&pin, Duration::from_millis(10))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::PinExpired));
+}
+
+#[tokio::test]
+async fn wait_for_pin_gives_up_after_lifetime() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/pins/12345"))
+        .respond_with(pin_body(None))
+        .mount(&server)
+        .await;
+
+    let plex = client(&server).await;
+    let mut pin: plex_core::plextv::Pin = serde_json::from_str(&fixture("pin.json")).unwrap();
+    pin.expires_in = Some(0);
+    let err = plex
+        .wait_for_pin(&pin, Duration::from_millis(10))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::PinExpired));
 }

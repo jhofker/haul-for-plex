@@ -1,5 +1,7 @@
 //! Client for the plex.tv account API: PIN login, user info and server discovery.
 
+use std::time::Duration;
+
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use url::Url;
@@ -8,6 +10,8 @@ use crate::error::{Error, Result};
 
 const PLEX_TV: &str = "https://plex.tv/";
 const AUTH_APP: &str = "https://app.plex.tv/auth";
+/// Plex PINs live 30 minutes; used when the response omits `expiresIn`.
+const DEFAULT_PIN_LIFETIME_SECS: u64 = 30 * 60;
 
 /// Identifies this app to Plex; sent as `X-Plex-*` headers on every request.
 #[derive(Debug, Clone)]
@@ -56,6 +60,9 @@ pub struct Pin {
     pub code: String,
     pub auth_token: Option<String>,
     pub expires_at: Option<String>,
+    /// Seconds until the PIN expires, as of when it was fetched.
+    #[serde(default)]
+    pub expires_in: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -158,6 +165,31 @@ impl PlexTvClient {
     pub async fn check_pin(&self, id: u64) -> Result<Pin> {
         let url = self.base.join(&format!("api/v2/pins/{id}"))?;
         send(self.http.get(url)).await
+    }
+
+    /// Poll `pin` every `interval` until the user approves it, returning the auth token.
+    ///
+    /// Gives up when the PIN expires (Plex returns 404 or `expires_in` elapses).
+    pub async fn wait_for_pin(&self, pin: &Pin, interval: Duration) -> Result<String> {
+        let lifetime = Duration::from_secs(pin.expires_in.unwrap_or(DEFAULT_PIN_LIFETIME_SECS));
+        let deadline = tokio::time::Instant::now() + lifetime;
+        loop {
+            match self.check_pin(pin.id).await {
+                Ok(Pin {
+                    auth_token: Some(token),
+                    ..
+                }) if !token.is_empty() => return Ok(token),
+                Ok(_) => {}
+                Err(Error::Status { status, .. }) if status == reqwest::StatusCode::NOT_FOUND => {
+                    return Err(Error::PinExpired);
+                }
+                Err(e) => return Err(e),
+            }
+            if tokio::time::Instant::now() + interval >= deadline {
+                return Err(Error::PinExpired);
+            }
+            tokio::time::sleep(interval).await;
+        }
     }
 
     /// Browser URL where the user approves `pin`.

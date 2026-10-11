@@ -4,7 +4,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("http request failed: {0}")]
+    #[error("http request failed")]
     Http(#[from] reqwest::Error),
 
     #[error("{url} returned {status}: {body}")]
@@ -33,6 +33,9 @@ pub enum Error {
 
     #[error("could not determine a config directory; set PLEX_GRABBER_CONFIG_DIR")]
     NoConfigDir,
+
+    #[error("login PIN expired before it was approved; run `plex-grabber login` again")]
+    PinExpired,
 
     #[error("not logged in; run `plex-grabber login` first")]
     NotLoggedIn,

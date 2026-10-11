@@ -71,7 +71,7 @@ All requests send `Accept: application/json` and the standard `X-Plex-*` headers
 ## Phase 1: CLI
 
 1. Workspace skeleton, config storage, plex.tv client types. ✅
-2. `login`, `logout`, `whoami`.
+2. `login`, `logout`, `whoami`. ✅
 3. `servers`, with connection probing.
 4. `libraries <server>`, `ls <server> <library|key>`.
 5. `search "<query>" [--server]`.
