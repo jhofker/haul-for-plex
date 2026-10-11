@@ -3,10 +3,12 @@
 pub mod config;
 pub mod error;
 pub mod plextv;
+pub mod server;
 
 pub use config::{Auth, Config, ConfigStore};
 pub use error::{Error, Result};
-pub use plextv::{ClientInfo, PlexTvClient};
+pub use plextv::{ClientInfo, PlexTvClient, Resource};
+pub use server::{ServerClient, find_server};
 
 /// Product name sent to Plex in `X-Plex-Product`.
 pub const PRODUCT: &str = "plex-grabber";

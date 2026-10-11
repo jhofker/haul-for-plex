@@ -822,6 +822,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures-util",
  "plex-core",
  "tokio",
  "tracing",
@@ -833,6 +834,7 @@ name = "plex-core"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",

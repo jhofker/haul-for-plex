@@ -37,6 +37,18 @@ pub enum Error {
     #[error("login PIN expired before it was approved; run `plex-grabber login` again")]
     PinExpired,
 
+    #[error("could not reach server {server}:{}", format_attempts(.attempts))]
+    Unreachable {
+        server: String,
+        attempts: Vec<(String, String)>,
+    },
+
+    #[error("no server matches {0:?}; run `plex-grabber servers` to list them")]
+    ServerNotFound(String),
+
+    #[error("{query:?} matches several servers: {}; be more specific", .matches.join(", "))]
+    AmbiguousServer { query: String, matches: Vec<String> },
+
     #[error("not logged in; run `plex-grabber login` first")]
     NotLoggedIn,
 }
@@ -48,4 +60,14 @@ impl Error {
             source,
         }
     }
+}
+
+fn format_attempts(attempts: &[(String, String)]) -> String {
+    if attempts.is_empty() {
+        return " it has no connections".into();
+    }
+    attempts
+        .iter()
+        .map(|(uri, err)| format!("\n  {uri}: {err}"))
+        .collect()
 }

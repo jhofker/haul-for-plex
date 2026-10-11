@@ -1,4 +1,6 @@
 mod auth;
+mod context;
+mod servers;
 
 use std::process::ExitCode;
 
@@ -29,6 +31,12 @@ enum Command {
     Logout,
     /// Show the signed-in Plex account.
     Whoami,
+    /// List the Plex servers you can access and how each is reachable.
+    Servers {
+        /// Show the connection used, or why each connection failed.
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// Show where the config file lives and this install's Plex client id.
     Config,
 }
@@ -56,6 +64,9 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Login { force } => auth::login(&store, force).await?,
         Command::Logout => auth::logout(&store)?,
         Command::Whoami => auth::whoami(&store).await?,
+        Command::Servers { verbose } => {
+            servers::list(context::Context::load(store)?, verbose).await?
+        }
         Command::Config => {
             let config = store.load_or_init()?;
             println!("config file: {}", store.path().display());

@@ -94,6 +94,9 @@ pub struct Resource {
     pub provides: String,
     #[serde(default)]
     pub owned: bool,
+    /// Owner's display name, for servers shared with you.
+    #[serde(default)]
+    pub source_title: Option<String>,
     #[serde(default)]
     pub presence: bool,
     /// Token for talking to this server; differs from the account token on shared servers.

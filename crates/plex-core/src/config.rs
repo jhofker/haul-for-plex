@@ -3,6 +3,7 @@
 //! Stored as JSON in `$PLEX_GRABBER_CONFIG_DIR/config.json` (or the OS config
 //! dir). The file holds a Plex token, so it is written with `0600` on Unix.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,9 @@ pub struct Config {
     pub client_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<Auth>,
+    /// Last working connection URI per server, keyed by machine identifier.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connections: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +38,7 @@ impl Config {
         Config {
             client_id: uuid::Uuid::new_v4().to_string(),
             auth: None,
+            connections: BTreeMap::new(),
         }
     }
 
