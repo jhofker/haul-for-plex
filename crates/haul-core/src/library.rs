@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::listing::View;
 use crate::plextv::send;
 use crate::server::ServerClient;
 
@@ -29,6 +30,9 @@ pub struct Metadata {
     #[serde(rename = "type")]
     pub kind: String,
     pub title: String,
+    /// Title to sort by, e.g. `Matrix` for `The Matrix`; only sent when it differs.
+    #[serde(default)]
+    pub title_sort: Option<String>,
     #[serde(default)]
     pub year: Option<u32>,
     /// Season number for seasons, episode number for episodes.
@@ -270,14 +274,14 @@ struct Hub {
 }
 
 /// Lowercase letters and digits only, so "Spider-Man" and "spiderman" compare equal.
-fn compact(s: &str) -> String {
+pub(crate) fn compact(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect()
 }
 
-fn tokens(query: &str) -> Vec<String> {
+pub(crate) fn tokens(query: &str) -> Vec<String> {
     query
         .split_whitespace()
         .map(compact)
@@ -287,7 +291,7 @@ fn tokens(query: &str) -> Vec<String> {
 
 /// Plex's search is fuzzy and also matches summaries and cast; keep only items
 /// whose title (or show/season title for episodes) contains every query word.
-fn matches_title(m: &Metadata, tokens: &[String]) -> bool {
+pub(crate) fn matches_title(m: &Metadata, tokens: &[String]) -> bool {
     let mut haystack = compact(&m.title);
     for extra in [&m.parent_title, &m.grandparent_title]
         .into_iter()
@@ -317,15 +321,18 @@ impl ServerClient {
         Ok(env.container.directories)
     }
 
-    /// One page of a library's top-level items, plus the library's total size.
+    /// One page of a library's top-level items, filtered and sorted by the
+    /// server, plus how many items match in total.
     pub async fn library_page(
         &self,
         library_key: &str,
         start: usize,
         size: usize,
+        view: &View,
     ) -> Result<(Vec<Metadata>, usize)> {
         let req = self
             .get(&format!("library/sections/{library_key}/all"))?
+            .query(&view.plex_params())
             .header("X-Plex-Container-Start", start.to_string())
             .header("X-Plex-Container-Size", size.to_string());
         let env: Envelope<MetadataList> = send(req).await?;
@@ -334,13 +341,16 @@ impl ServerClient {
         Ok((page, total))
     }
 
-    /// Every top-level item in a library (movies, or shows), fetched in pages.
-    pub async fn library_items(&self, library_key: &str) -> Result<Vec<Metadata>> {
+    /// Every top-level item in a library (movies, or shows), filtered and
+    /// sorted by the server, fetched in pages.
+    pub async fn library_items(&self, library_key: &str, view: &View) -> Result<Vec<Metadata>> {
         let path = format!("library/sections/{library_key}/all");
+        let params = view.plex_params();
         let mut items = Vec::new();
         loop {
             let req = self
                 .get(&path)?
+                .query(&params)
                 .header("X-Plex-Container-Start", items.len().to_string())
                 .header("X-Plex-Container-Size", PAGE_SIZE.to_string());
             let env: Envelope<MetadataList> = send(req).await?;

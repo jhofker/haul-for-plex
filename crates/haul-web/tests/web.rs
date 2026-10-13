@@ -17,6 +17,8 @@ const FILE: &[u8] = b"pretend this is a video file";
 
 struct Env {
     app: Router,
+    /// The fake Plex server, for tests that need more of it.
+    pms: MockServer,
     plextv: MockServer,
     store: ConfigStore,
     movies: PathBuf,
@@ -110,8 +112,6 @@ async fn env(logged_in: bool, password: Option<&str>) -> Env {
         }])),
     )
     .await;
-    // Keep the PMS alive for the whole test.
-    std::mem::forget(pms);
 
     let dir = tempfile::tempdir().unwrap();
     let store = ConfigStore::in_dir(dir.path().join("config"));
@@ -136,6 +136,7 @@ async fn env(logged_in: bool, password: Option<&str>) -> Env {
     });
     Env {
         app,
+        pms,
         plextv,
         store,
         movies,
@@ -419,4 +420,129 @@ async fn download_rejects_unknown_version() {
         .unwrap();
     let r = send(&env.app, req).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn library_filter_and_sort_go_to_the_server_and_survive_paging() {
+    let env = env(true, None).await;
+    let pms = &env.pms;
+    Mock::given(method("GET"))
+        .and(path("/library/sections/1/all"))
+        .and(wiremock::matchers::query_param("sort", "year:desc"))
+        .and(wiremock::matchers::query_param("title", "alien"))
+        .and(wiremock::matchers::query_param("year", "1979"))
+        .respond_with(container(json!({"totalSize": 150, "Metadata": [
+            {"ratingKey": "5", "type": "movie", "title": "Alien", "year": 1979},
+        ]})))
+        .with_priority(1)
+        .mount(pms)
+        .await;
+
+    let r = get(
+        &env.app,
+        &format!("/servers/{SERVER_ID}/libraries/1?title=alien&year=1979&sort=year:desc"),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Alien (1979)"));
+    assert!(r.body.contains("150 matching items"));
+    // The controls show what is applied, and the pager keeps it.
+    assert!(r.body.contains("value=\"alien\""));
+    assert!(r.body.contains("value=\"1979\""));
+    assert!(r.body.contains("<option value=\"year:desc\" selected>"));
+    assert!(
+        r.body
+            .contains("?title=alien&amp;year=1979&amp;sort=year%3Adesc&amp;page=2")
+    );
+
+    // Blank form fields are the same as no filter.
+    let r = get(
+        &env.app,
+        &format!("/servers/{SERVER_ID}/libraries/1?title=&year=&sort="),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("250 items"));
+    assert!(!r.body.contains(">Clear<"));
+}
+
+#[tokio::test]
+async fn episodes_can_be_filtered_and_sorted() {
+    let env = env(true, None).await;
+    let pms = &env.pms;
+    mock_get(
+        pms,
+        "/library/metadata/30",
+        container(json!({"Metadata": [{
+            "ratingKey": "30", "type": "season", "title": "Season 1", "index": 1,
+            "parentTitle": "Some Show", "parentRatingKey": "20",
+        }]})),
+    )
+    .await;
+    mock_get(
+        pms,
+        "/library/metadata/30/children",
+        container(json!({"Metadata": [
+            {"ratingKey": "31", "type": "episode", "title": "Pilot", "index": 1, "parentIndex": 1,
+             "originallyAvailableAt": "2020-01-01"},
+            {"ratingKey": "32", "type": "episode", "title": "Second", "index": 2, "parentIndex": 1,
+             "originallyAvailableAt": "2020-01-08"},
+            {"ratingKey": "33", "type": "episode", "title": "Finale", "index": 3, "parentIndex": 1,
+             "originallyAvailableAt": "2020-01-15"},
+        ]})),
+    )
+    .await;
+
+    let r = get(&env.app, &format!("/servers/{SERVER_ID}/items/30")).await;
+    assert!(r.body.contains("Episode order"));
+    let order = |body: &str| {
+        ["Pilot", "Second", "Finale"]
+            .map(|t| body.find(&format!("· {t}<")).map(|i| (i, t)))
+            .into_iter()
+            .flatten()
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&r.body), ["Pilot", "Second", "Finale"]);
+
+    let r = get(
+        &env.app,
+        &format!("/servers/{SERVER_ID}/items/30?sort=released:desc"),
+    )
+    .await;
+    assert_eq!(order(&r.body), ["Finale", "Second", "Pilot"]);
+
+    let r = get(
+        &env.app,
+        &format!("/servers/{SERVER_ID}/items/30?title=fin"),
+    )
+    .await;
+    assert_eq!(order(&r.body), ["Finale"]);
+
+    let r = get(
+        &env.app,
+        &format!("/servers/{SERVER_ID}/items/30?title=nope"),
+    )
+    .await;
+    assert!(r.body.contains("Nothing matches these filters."));
+}
+
+#[tokio::test]
+async fn search_results_can_be_narrowed_by_type_and_sorted() {
+    let env = env(true, None).await;
+    let base = format!("/search?q=movie&server={SERVER_ID}&library=1");
+
+    let r = get(&env.app, &format!("{base}&type=episode")).await;
+    assert!(r.body.contains("Pilot"));
+    assert!(!r.body.contains("Some Movie (1999)"));
+    assert!(r.body.contains("<option value=\"episode\" selected>"));
+
+    let r = get(&env.app, &format!("{base}&type=show")).await;
+    assert!(r.body.contains("No shows found for “movie”."));
+
+    let r = get(&env.app, &format!("{base}&sort=title")).await;
+    let movie = r.body.find("Some Movie (1999)").unwrap();
+    let pilot = r.body.find("Pilot").unwrap();
+    assert!(pilot < movie, "by title, Pilot comes before Some Movie");
 }

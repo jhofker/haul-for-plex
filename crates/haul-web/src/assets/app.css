@@ -40,7 +40,7 @@ tr:last-child td { border-bottom: 0; }
 button, .button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 6px; padding: .4rem .8rem; }
 button.primary, .button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
 button.link { border: 0; background: none; color: var(--accent); padding: 0; }
-input[type=search], input[type=text] { font: inherit; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); min-width: min(24rem, 100%); }
+input[type=search], input[type=text], input[type=number] { font: inherit; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); min-width: min(24rem, 100%); }
 form.inline { display: inline; margin: 0; }
 .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .pager { display: flex; gap: 1rem; margin: 1rem 0; align-items: center; }
@@ -73,3 +73,6 @@ img.cover.large { margin-top: .3rem; }
 .version .path { margin-top: .25rem; }
 select { font: inherit; padding: .35rem .5rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
 form .row { margin-bottom: .75rem; }
+.listctl { margin-bottom: .75rem; }
+.listctl input[type=search] { min-width: min(16rem, 100%); }
+.listctl input.year { min-width: 0; width: 6.5rem; }

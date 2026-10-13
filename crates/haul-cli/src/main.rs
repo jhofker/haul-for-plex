@@ -57,6 +57,16 @@ enum Command {
         server: String,
         /// Library name, or an item key from a previous listing.
         target: String,
+        /// Only list items whose title contains this text.
+        #[arg(short, long, value_name = "TEXT")]
+        filter: Option<String>,
+        /// Only list items from this year.
+        #[arg(short, long)]
+        year: Option<u32>,
+        /// Order by title, year, added, released or rating; add :desc to
+        /// reverse, e.g. `--sort added:desc` for the most recently added first.
+        #[arg(long, value_name = "KEY[:asc|:desc]")]
+        sort: Option<haul_core::Sort>,
     },
     /// Search for movies, shows and episodes across your servers.
     Search {
@@ -150,8 +160,29 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Libraries { server } => {
             browse::libraries(context::Context::load(store)?, &server, cli.json).await?
         }
-        Command::Ls { server, target } => {
-            browse::ls(context::Context::load(store)?, &server, &target, cli.json).await?
+        Command::Ls {
+            server,
+            target,
+            filter,
+            year,
+            sort,
+        } => {
+            let view = haul_core::View {
+                filter: haul_core::Filter {
+                    text: filter.filter(|f| !f.trim().is_empty()),
+                    kind: None,
+                    year,
+                },
+                sort,
+            };
+            browse::ls(
+                context::Context::load(store)?,
+                &server,
+                &target,
+                &view,
+                cli.json,
+            )
+            .await?
         }
         Command::Search {
             query,

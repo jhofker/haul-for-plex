@@ -6,6 +6,7 @@ use haul_core::{Library, Metadata, PlannedFile, format_size};
 use maud::{DOCTYPE, Markup, html};
 
 use crate::downloads::{Job, JobState};
+use crate::listing::{ListParams, href};
 
 pub const PAGE_SIZE: usize = 100;
 
@@ -136,7 +137,7 @@ pub fn servers_page(user: &str, servers: &[Resource]) -> Markup {
         html! {
             h1 { "Servers" }
             @if !servers.is_empty() {
-                (search_form(SearchScope::default(), "", "Search all servers"))
+                (search_form(SearchScope::default(), "", "Search all servers", None))
             }
             @if servers.is_empty() {
                 p.empty { "No servers are shared with this Plex account." }
@@ -181,6 +182,7 @@ pub fn libraries_page(user: &str, server: &Resource, libraries: &[Library]) -> M
                 SearchScope { server: Some(&server.client_identifier), library: None },
                 "",
                 &format!("Search {}", server.name),
+                None,
             ))
             @if libraries.is_empty() {
                 p.empty { "This server has no libraries you can access." }
@@ -250,10 +252,11 @@ fn cover(server_id: &str, m: &Metadata, large: bool) -> Markup {
 
 /// `context` adds the show an episode or season belongs to (for search results,
 /// where items aren't listed under their show).
-fn items_table(server_id: &str, items: &[Metadata], context: bool) -> Markup {
+/// `empty` is shown instead of the table when there are no items.
+fn items_table(server_id: &str, items: &[Metadata], context: bool, empty: &str) -> Markup {
     html! {
         @if items.is_empty() {
-            p.empty { "Nothing here." }
+            p.empty { (empty) }
         } @else {
             table {
                 thead { tr { th { "Title" } th { "Type" } th { "Details" } } }
@@ -293,20 +296,40 @@ fn items_table(server_id: &str, items: &[Metadata], context: bool) -> Markup {
     }
 }
 
-pub fn library_page(
-    user: &str,
-    server: &Resource,
-    library_key: &str,
-    library_title: &str,
-    items: &[Metadata],
-    page: usize,
-    total: usize,
-) -> Markup {
+pub struct LibraryPage<'a> {
+    pub user: &'a str,
+    pub server: &'a Resource,
+    pub library_key: &'a str,
+    pub library_title: &'a str,
+    pub items: &'a [Metadata],
+    pub page: usize,
+    /// How many items match the filter, across all pages.
+    pub total: usize,
+    pub params: &'a ListParams,
+}
+
+pub fn library_page(p: &LibraryPage<'_>) -> Markup {
+    let LibraryPage {
+        user,
+        server,
+        library_key,
+        library_title,
+        items,
+        page,
+        total,
+        params,
+    } = *p;
     let pages = total.div_ceil(PAGE_SIZE).max(1);
     let base = format!(
         "/servers/{}/libraries/{library_key}",
         server.client_identifier
     );
+    let page_link = |n: usize| {
+        let mut pairs = params.pairs();
+        pairs.push(("page", n.to_string()));
+        href(&base, &pairs)
+    };
+    let filtered = params.view().filter != haul_core::Filter::default();
     layout(
         library_title,
         "servers",
@@ -321,18 +344,138 @@ pub fn library_page(
                 SearchScope { server: Some(&server.client_identifier), library: Some(library_key) },
                 "",
                 &format!("Search {library_title}"),
+                None,
             ))
-            p.muted { (total) " items" }
-            (items_table(&server.client_identifier, items, false))
+            (list_controls(&ListControls {
+                action: &base,
+                params,
+                sorts: LIBRARY_SORTS,
+                default_sort: "Title, A–Z",
+                title: true,
+                year: true,
+            }))
+            p.muted { (total) @if filtered { " matching" } " items" }
+            (items_table(
+                &server.client_identifier,
+                items,
+                false,
+                if filtered { "Nothing matches these filters." } else { "Nothing here." },
+            ))
             @if pages > 1 {
                 div.pager {
-                    @if page > 1 { a href={(base) "?page=" (page - 1)} { "← Previous" } }
+                    @if page > 1 { a href=(page_link(page - 1)) { "← Previous" } }
                     span.muted { "Page " (page) " of " (pages) }
-                    @if page < pages { a href={(base) "?page=" (page + 1)} { "Next →" } }
+                    @if page < pages { a href=(page_link(page + 1)) { "Next →" } }
                 }
             }
         },
     )
+}
+
+/// A sort menu entry: the `sort` value and its label. The list's own order
+/// (an empty value) comes first and is labelled per list.
+type SortOption = (&'static str, &'static str);
+
+const LIBRARY_SORTS: &[SortOption] = &[
+    ("title:desc", "Title, Z–A"),
+    ("year:desc", "Year, newest first"),
+    ("year", "Year, oldest first"),
+    ("added:desc", "Recently added"),
+    ("released:desc", "Release date, newest first"),
+    ("rating:desc", "Highest rated"),
+];
+
+const CHILD_SORTS: &[SortOption] = &[
+    ("title", "Title, A–Z"),
+    ("title:desc", "Title, Z–A"),
+    ("released:desc", "Air date, newest first"),
+    ("released", "Air date, oldest first"),
+    ("added:desc", "Recently added"),
+    ("rating:desc", "Highest rated"),
+];
+
+const SEARCH_SORTS: &[SortOption] = &[
+    ("title", "Title, A–Z"),
+    ("year:desc", "Year, newest first"),
+    ("year", "Year, oldest first"),
+    ("added:desc", "Recently added"),
+    ("rating:desc", "Highest rated"),
+];
+
+const KINDS: [(&str, &str); 4] = [
+    ("movie", "Movies"),
+    ("show", "Shows"),
+    ("season", "Seasons"),
+    ("episode", "Episodes"),
+];
+
+fn kind_label(params: &ListParams) -> Option<&'static str> {
+    let kind = params.view().filter.kind?;
+    KINDS.iter().find(|(v, _)| *v == kind).map(|(_, l)| *l)
+}
+
+/// `current` is the normalised sort value; one not in `options` (from a
+/// hand-edited URL) still gets an entry so the menu matches the list.
+fn sort_select(options: &[SortOption], default_label: &str, current: &str) -> Markup {
+    let known = current.is_empty() || options.iter().any(|(v, _)| *v == current);
+    html! {
+        select name="sort" aria-label="Sort" {
+            option value="" selected[current.is_empty()] { (default_label) }
+            @for (value, label) in options {
+                option value=(value) selected[*value == current] { (label) }
+            }
+            @if !known { option value=(current) selected { (current) } }
+        }
+    }
+}
+
+fn kind_select(params: &ListParams) -> Markup {
+    let current = params.view().filter.kind.unwrap_or_default();
+    html! {
+        select name="type" aria-label="Type" {
+            option value="" selected[current.is_empty()] { "All types" }
+            @for (value, label) in KINDS {
+                option value=(value) selected[value == current] { (label) }
+            }
+        }
+    }
+}
+
+struct ListControls<'a> {
+    /// The page's own path; the form reloads it with the chosen settings.
+    action: &'a str,
+    params: &'a ListParams,
+    sorts: &'a [SortOption],
+    /// Label for the list's own order.
+    default_sort: &'a str,
+    /// Offer a title filter box.
+    title: bool,
+    /// Offer a year box.
+    year: bool,
+}
+
+/// Filter and sort controls above a list. Menus apply as soon as they
+/// change; text boxes on Enter or Apply.
+fn list_controls(c: &ListControls<'_>) -> Markup {
+    let view = c.params.view();
+    html! {
+        form.row.listctl method="get" action=(c.action)
+            hx-get=(c.action) hx-target="main" hx-select="main" hx-swap="outerHTML"
+            hx-push-url="true" data-autosubmit {
+            @if c.title {
+                input type="search" name="title" value=(view.filter.text.as_deref().unwrap_or(""))
+                    placeholder="Filter titles" aria-label="Filter titles";
+            }
+            @if c.year {
+                input.year type="number" name="year" min="1800" max="2200"
+                    value=(view.filter.year.map(|y| y.to_string()).unwrap_or_default())
+                    placeholder="Year" aria-label="Year";
+            }
+            (sort_select(c.sorts, c.default_sort, &c.params.sort_value()))
+            button type="submit" { "Apply" }
+            @if !c.params.is_default() { a href=(c.action) { "Clear" } }
+        }
+    }
 }
 
 pub struct ItemPage<'a> {
@@ -340,7 +483,11 @@ pub struct ItemPage<'a> {
     pub server: &'a Resource,
     pub item: &'a Metadata,
     pub crumbs: Vec<(String, String)>,
+    /// Seasons or episodes, already filtered and sorted.
     pub children: &'a [Metadata],
+    /// How many children there are before filtering.
+    pub child_count: usize,
+    pub params: &'a ListParams,
     /// What a download would save; empty if the item can't be downloaded.
     pub plan: &'a [PlannedFile],
     /// For a movie or episode with several versions: each version's number
@@ -419,7 +566,19 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
                 (media_card(i, p.item.media.len(), media))
             }
 
-            @if !p.children.is_empty() { (items_table(id, p.children, false)) }
+            @if p.child_count > 1 {
+                (list_controls(&ListControls {
+                    action: &format!("/servers/{id}/items/{}", p.item.rating_key),
+                    params: p.params,
+                    sorts: CHILD_SORTS,
+                    default_sort: if p.item.kind == "show" { "Season order" } else { "Episode order" },
+                    title: true,
+                    year: false,
+                }))
+            }
+            @if p.child_count > 0 {
+                (items_table(id, p.children, false, "Nothing matches these filters."))
+            }
         },
     )
 }
@@ -659,14 +818,25 @@ pub struct SearchScope<'a> {
 }
 
 /// Search box that swaps just the page's `<main>` and shows a spinner meanwhile.
-pub fn search_form(scope: SearchScope<'_>, query: &str, placeholder: &str) -> Markup {
+/// With `params`, it also offers type and sort menus for the results.
+pub fn search_form(
+    scope: SearchScope<'_>,
+    query: &str,
+    placeholder: &str,
+    params: Option<&ListParams>,
+) -> Markup {
     html! {
         form.row.search method="get" action="/search"
             hx-get="/search" hx-target="main" hx-select="main" hx-swap="outerHTML"
-            hx-push-url="true" hx-indicator="#search-spinner" hx-disabled-elt="find button" {
+            hx-push-url="true" hx-indicator="#search-spinner" hx-disabled-elt="find button"
+            data-autosubmit {
             @if let Some(server) = scope.server { input type="hidden" name="server" value=(server); }
             @if let Some(library) = scope.library { input type="hidden" name="library" value=(library); }
             input type="search" name="q" value=(query) placeholder=(placeholder);
+            @if let Some(params) = params {
+                (kind_select(params))
+                (sort_select(SEARCH_SORTS, "Best match", &params.sort_value()))
+            }
             button.primary type="submit" { "Search" }
             span.spinner #search-spinner role="status" aria-label="Searching" {}
         }
@@ -680,6 +850,7 @@ pub struct SearchPage<'a> {
     /// Server and library names, for the heading and breadcrumbs.
     pub server: Option<&'a Resource>,
     pub library_title: Option<&'a str>,
+    pub params: &'a ListParams,
     pub results: Option<SearchResults<'a>>,
 }
 
@@ -704,16 +875,22 @@ pub fn search_page(p: &SearchPage<'_>) -> Markup {
                 }
             }
             h1 { "Search" }
-            (search_form(p.scope, p.query, &place))
+            (search_form(p.scope, p.query, &place, Some(p.params)))
             @if let Some(results) = &p.results {
                 @for name in results.skipped { p.muted { "Skipped " (name) " (unreachable)" } }
                 @if results.found.iter().all(|(_, items)| items.is_empty()) {
-                    p.empty { "No results for “" (p.query) "”." }
+                    p.empty {
+                        @if let Some(kind) = kind_label(p.params) {
+                            "No " (kind.to_lowercase()) " found for “" (p.query) "”."
+                        } @else {
+                            "No results for “" (p.query) "”."
+                        }
+                    }
                 }
                 @for (server, items) in results.found {
                     @if !items.is_empty() {
                         @if p.scope.server.is_none() { h2 { (server.name) } }
-                        (items_table(&server.client_identifier, items, true))
+                        (items_table(&server.client_identifier, items, true, ""))
                     }
                 }
             }
