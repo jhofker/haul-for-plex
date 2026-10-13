@@ -34,23 +34,23 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build
-        run: cargo build --release --locked -p plex-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p haul-cli --target ${{ matrix.target }}
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          name="plex-grabber-${{ github.ref_name }}-${{ matrix.target }}"
+          name="haul-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir "$name"
-          cp "target/${{ matrix.target }}/release/plex-grabber" README.md "$name/"
+          cp "target/${{ matrix.target }}/release/haul" README.md "$name/"
           tar czf "$name.tar.gz" "$name"
           echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          name="plex-grabber-${{ github.ref_name }}-${{ matrix.target }}"
+          name="haul-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir "$name"
-          cp "target/${{ matrix.target }}/release/plex-grabber.exe" README.md "$name/"
+          cp "target/${{ matrix.target }}/release/haul.exe" README.md "$name/"
           7z a "$name.zip" "$name"
           echo "ASSET=$name.zip" >> "$GITHUB_ENV"
       - uses: softprops/action-gh-release@v2

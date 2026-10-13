@@ -1,4 +1,4 @@
-# plex-grabber plan
+# Haul for Plex plan
 
 A slim Rust replacement for [Reaparr](https://github.com/Reaparr/Reaparr): sign in
 with a Plex account, browse/search the servers you have access to, and download
@@ -21,21 +21,21 @@ media to disk in a clean, Plex-friendly layout.
 
 ```
 crates/
-  plex-core/   library: config, plex.tv client, server client, naming, downloader
-  plex-cli/    `plex-grabber` binary (clap)
-  plex-web/    phase 2: axum + htmx (reuses plex-core)
+  haul-core/   library: config, plex.tv client, server client, naming, downloader
+  haul-cli/    `haul` binary (clap)
+  haul-web/    phase 2: axum + htmx (reuses haul-core)
 ```
 
 ## Configuration
 
-- Config dir: `$PLEX_GRABBER_CONFIG_DIR`, else the OS config dir
-  (`~/.config/plex-grabber` on Linux). Docker sets it to `/config`.
+- Config dir: `$HAUL_CONFIG_DIR`, else the OS config dir
+  (`~/.config/haul` on Linux). Docker sets it to `/config`.
 - `config.json` holds a persistent `client_id` (generated once) and the auth
   token/username after login.
 - Movies and TV shows go to separate folders, so a container can map in an
   existing media library for each:
-  - `--movies-dir` / `$PLEX_GRABBER_MOVIES_DIR` (Docker: `/movies`)
-  - `--tv-dir` / `$PLEX_GRABBER_TV_DIR` (Docker: `/tv`)
+  - `--movies-dir` / `$HAUL_MOVIES_DIR` (Docker: `/movies`)
+  - `--tv-dir` / `$HAUL_TV_DIR` (Docker: `/tv`)
   - If unset, the CLI falls back to `./downloads/Movies` and `./downloads/TV Shows`.
 
 ## Plex API
@@ -84,8 +84,8 @@ All requests send `Accept: application/json` and the standard `X-Plex-*` headers
 
 ## Phase 2: Web ✅
 
-- `plex-grabber serve` runs an axum + maud + htmx server (htmx is vendored and
-  embedded, so it works offline). `plex-web` is a library crate used by the CLI,
+- `haul serve` runs an axum + maud + htmx server (htmx is vendored and
+  embedded, so it works offline). `haul-web` is a library crate used by the CLI,
   so there is still one binary and one image.
 - PIN login in the browser; the token goes in the same config file as the CLI.
 - Pages: servers → libraries (paged) → items → seasons/episodes, search across

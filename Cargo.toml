@@ -1,16 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["crates/plex-core", "crates/plex-cli", "crates/plex-web"]
+members = ["crates/haul-core", "crates/haul-cli", "crates/haul-web"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/jhofker/plex-grabber"
+repository = "https://github.com/jhofker/haul-for-plex"
 
 [workspace.dependencies]
-plex-core = { path = "crates/plex-core" }
-plex-web = { path = "crates/plex-web" }
+haul-core = { path = "crates/haul-core" }
+haul-web = { path = "crates/haul-web" }
 anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
