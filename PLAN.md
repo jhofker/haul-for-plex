@@ -22,7 +22,7 @@ media to disk in a clean, Plex-friendly layout.
 ```
 crates/
   haul-core/   library: config, plex.tv client, server client, naming, downloader
-  haul-cli/    `haul` binary (clap)
+  haul-cli/    `haul-for-plex` package, `haul` binary (clap)
   haul-web/    phase 2: axum + htmx (reuses haul-core)
 ```
 

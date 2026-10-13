@@ -2,7 +2,7 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-RUN cargo build --release --locked -p haul-cli
+RUN cargo build --release --locked -p haul-for-plex
 
 FROM gcr.io/distroless/cc-debian12
 COPY --from=build /src/target/release/haul /usr/local/bin/haul

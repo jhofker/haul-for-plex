@@ -17,7 +17,9 @@ line or through a simple web interface.
 [releases page](https://github.com/jhofker/haul-for-plex/releases) (Linux,
 macOS and Windows).
 
-**From source:** `cargo install --path crates/haul-cli` (installs `haul`).
+**From crates.io:** `cargo install haul-for-plex` (installs `haul`).
+
+**From source:** `cargo install --path crates/haul-cli`.
 
 **Docker:** `docker pull ghcr.io/jhofker/haul-for-plex` (`latest` is the newest
 release; pin `0.1` or `0.1.0` to stay on a version)
@@ -124,7 +126,7 @@ $ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The workspace has three crates: `haul-core` (Plex clients, naming, downloader),
-`haul-cli` (the `haul` binary) and `haul-web` (the web interface).
+`haul-for-plex` (the `haul` binary, in `crates/haul-cli`) and `haul-web` (the web interface).
 See `PLAN.md` for the design notes.
 
 ## Upgrading from plex-grabber

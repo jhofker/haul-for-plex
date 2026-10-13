@@ -1,8 +1,15 @@
 [package]
 name = "haul-core"
+description = "Plex account sign-in, server discovery, library browsing and resumable downloads; the engine behind Haul for Plex"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 directories.workspace = true

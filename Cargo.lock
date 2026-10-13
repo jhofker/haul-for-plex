@@ -505,23 +505,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "haul-cli"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures-util",
- "haul-core",
- "haul-web",
- "indicatif",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "haul-core"
 version = "0.2.0"
 dependencies = [
@@ -537,6 +520,23 @@ dependencies = [
  "url",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "haul-for-plex"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures-util",
+ "haul-core",
+ "haul-web",
+ "indicatif",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

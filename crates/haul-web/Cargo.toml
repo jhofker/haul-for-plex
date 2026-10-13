@@ -1,8 +1,15 @@
 [package]
 name = "haul-web"
+description = "Web interface (axum + htmx) for Haul for Plex"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 haul-core.workspace = true

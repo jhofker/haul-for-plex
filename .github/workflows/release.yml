@@ -34,7 +34,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build
-        run: cargo build --release --locked -p haul-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p haul-for-plex --target ${{ matrix.target }}
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
