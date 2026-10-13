@@ -10,8 +10,9 @@ use maud::Markup;
 use serde::Deserialize;
 
 use crate::guard::guard;
+use crate::listing::ListParams;
 use crate::state::{AppState, Settings};
-use crate::views::{self, ItemPage, PAGE_SIZE};
+use crate::views::{self, ItemPage, LibraryPage, PAGE_SIZE};
 
 pub fn router(settings: Settings) -> Router {
     let state = AppState::new(settings);
@@ -179,12 +180,13 @@ async fn library(
     State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<PageQuery>,
+    Query(params): Query<ListParams>,
 ) -> Page {
     let user = user(&state)?;
     let (server, client) = state.server(&id).await?;
     let page = query.page.unwrap_or(1).max(1);
     let (items, total) = client
-        .library_page(&key, (page - 1) * PAGE_SIZE, PAGE_SIZE)
+        .library_page(&key, (page - 1) * PAGE_SIZE, PAGE_SIZE, &params.view())
         .await?;
     let title = client
         .libraries()
@@ -193,12 +195,26 @@ async fn library(
         .find(|l| l.key == key)
         .map(|l| l.title)
         .ok_or_else(|| Error::ItemNotFound(key.clone()))?;
-    Ok(views::library_page(
-        &user, &server, &key, &title, &items, page, total,
-    ))
+    Ok(views::library_page(&LibraryPage {
+        user: &user,
+        server: &server,
+        library_key: &key,
+        library_title: &title,
+        items: &items,
+        page,
+        total,
+        params: &params,
+    }))
 }
 
-async fn item(State(state): State<AppState>, Path((id, key)): Path<(String, String)>) -> Page {
+async fn item(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(String, String)>,
+    Query(mut params): Query<ListParams>,
+) -> Page {
+    // Seasons and episodes offer a title filter and sorting only.
+    params.year.clear();
+    params.kind.clear();
     let user = user(&state)?;
     let (server, client) = state.server(&id).await?;
     let item = client.metadata(&key).await?;
@@ -223,10 +239,12 @@ async fn item(State(state): State<AppState>, Path((id, key)): Path<(String, Stri
         _ => {}
     }
 
-    let children = match item.kind.as_str() {
+    let mut children = match item.kind.as_str() {
         "show" | "season" => client.children(&item.rating_key).await?,
         _ => Vec::new(),
     };
+    let child_count = children.len();
+    params.view().apply(&mut children);
     // Not every item can be downloaded (e.g. music); then there's no button.
     let layout = &state.settings().layout;
     let plan = client
@@ -253,6 +271,8 @@ async fn item(State(state): State<AppState>, Path((id, key)): Path<(String, Stri
         item: &item,
         crumbs,
         children: &children,
+        child_count,
+        params: &params,
         plan: &plan,
         version_plans: &version_plans,
     }))
@@ -267,7 +287,14 @@ struct SearchQuery {
     library: Option<String>,
 }
 
-async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>) -> Page {
+async fn search(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+    Query(mut params): Query<ListParams>,
+) -> Page {
+    // Search results offer type and sort menus, not a second text filter.
+    params.title.clear();
+    params.year.clear();
     let user = user(&state)?;
     let q = query.q.unwrap_or_default();
     let q = q.trim();
@@ -301,6 +328,7 @@ async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>)
             scope,
             server: scoped.as_ref().map(|(r, _)| r),
             library_title: library_title.as_deref(),
+            params: &params,
             results,
         })
     };
@@ -329,11 +357,15 @@ async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>)
         }
     };
 
+    let view = params.view();
     let mut found = Vec::new();
     let mut skipped = Vec::new();
     for (resource, outcome) in outcomes {
         match outcome {
-            Ok(items) => found.push((resource, items)),
+            Ok(mut items) => {
+                view.apply(&mut items);
+                found.push((resource, items));
+            }
             // Searching one chosen server should say why it failed.
             Err(e) if scoped.is_some() => return Err(e.into()),
             Err(_) => skipped.push(resource.name),

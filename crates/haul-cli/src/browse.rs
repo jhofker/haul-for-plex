@@ -1,5 +1,5 @@
 use anyhow::Result;
-use haul_core::{Library, Metadata};
+use haul_core::{Library, Metadata, View};
 
 use crate::context::Context;
 use crate::table;
@@ -24,12 +24,19 @@ pub async fn libraries(mut ctx: Context, server: &str, json: bool) -> Result<()>
 }
 
 /// List a library (by name or key) or the contents/details of an item (by key).
-pub async fn ls(mut ctx: Context, server: &str, target: &str, json: bool) -> Result<()> {
+/// `view` filters and sorts the listing; it doesn't apply to a single item's details.
+pub async fn ls(
+    mut ctx: Context,
+    server: &str,
+    target: &str,
+    view: &View,
+    json: bool,
+) -> Result<()> {
     let client = ctx.server(server).await?;
 
     let libs = client.libraries().await?;
     if let Some(lib) = find_library(&libs, target) {
-        let items = client.library_items(&lib.key).await?;
+        let items = client.library_items(&lib.key, view).await?;
         if json {
             crate::output::json(&items.iter().map(item_json).collect::<Vec<_>>());
             return Ok(());
@@ -47,7 +54,8 @@ pub async fn ls(mut ctx: Context, server: &str, target: &str, json: bool) -> Res
             print_details(&item);
         }
     } else {
-        let children = client.children(&item.rating_key).await?;
+        let mut children = client.children(&item.rating_key).await?;
+        view.apply(&mut children);
         if json {
             let mut value = item_json(&item);
             value["children"] = children.iter().map(item_json).collect();

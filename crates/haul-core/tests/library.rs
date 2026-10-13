@@ -1,6 +1,6 @@
-use haul_core::{ClientInfo, Error, Resource, ServerClient};
+use haul_core::{ClientInfo, Error, Filter, Resource, ServerClient, View};
 use serde_json::{Value, json};
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 async fn setup() -> (MockServer, ServerClient) {
@@ -77,7 +77,7 @@ async fn library_items_pages_until_total() {
         .mount(&server)
         .await;
 
-    let items = client.library_items("1").await.unwrap();
+    let items = client.library_items("1", &View::default()).await.unwrap();
     assert_eq!(items.len(), 502);
     assert_eq!(items[501].title, "Movie 501");
 }
@@ -91,7 +91,13 @@ async fn empty_library_has_no_metadata_key() {
         json!({"size": 0, "totalSize": 0}),
     )
     .await;
-    assert!(client.library_items("3").await.unwrap().is_empty());
+    assert!(
+        client
+            .library_items("3", &View::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -185,7 +191,39 @@ async fn library_page_returns_total() {
         .mount(&server)
         .await;
 
-    let (items, total) = client.library_page("1", 100, 50).await.unwrap();
+    let (items, total) = client
+        .library_page("1", 100, 50, &View::default())
+        .await
+        .unwrap();
     assert_eq!(total, 230);
     assert_eq!(items[0].library_section_id, Some(1));
+}
+
+#[tokio::test]
+async fn library_listing_asks_the_server_to_filter_and_sort() {
+    let (server, client) = setup().await;
+    Mock::given(method("GET"))
+        .and(path("/library/sections/1/all"))
+        .and(query_param("sort", "addedAt:desc"))
+        .and(query_param("title", "alien"))
+        .and(query_param("year", "1979"))
+        .respond_with(container(json!({
+            "totalSize": 1,
+            "Metadata": [{"ratingKey": "5", "type": "movie", "title": "Alien", "year": 1979}],
+        })))
+        .mount(&server)
+        .await;
+
+    let view = View {
+        filter: Filter {
+            text: Some("alien".into()),
+            year: Some(1979),
+            ..Filter::default()
+        },
+        sort: Some("added:desc".parse().unwrap()),
+    };
+    let (items, total) = client.library_page("1", 0, 50, &view).await.unwrap();
+    assert_eq!((items.len(), total), (1, 1));
+    let items = client.library_items("1", &view).await.unwrap();
+    assert_eq!(items[0].title, "Alien");
 }

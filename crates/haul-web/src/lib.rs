@@ -2,6 +2,7 @@
 
 mod downloads;
 mod guard;
+mod listing;
 mod routes;
 mod state;
 mod views;

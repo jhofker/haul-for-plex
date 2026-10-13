@@ -29,6 +29,7 @@ $ haul login                       # prints a link; approve it in your browser
 $ haul servers                     # your servers and how each is reachable
 $ haul libraries "Home"            # server names can be abbreviated
 $ haul ls "Home" movies            # a library, or any item key
+$ haul ls "Home" movies --sort added:desc --filter alien --year 1979
 $ haul search "blade runner"       # across all your servers
 $ haul download "Home" 84521       # a movie, episode, season or show key
 $ haul download "Home" 100583 --parallel 4 --dry-run
@@ -61,7 +62,9 @@ $ haul serve --bind 0.0.0.0:8080 --password 'something long'
 ```
 
 Sign in with Plex in the browser, then browse servers and libraries, search,
-and press **Download**. The Downloads page shows live progress and lets you
+and press **Download**. Library, episode and search lists can be filtered by
+title, year or type and sorted by title, year, date added, release date or
+rating. The Downloads page shows live progress and lets you
 cancel. It is designed for a single user; the queue lives in memory, so
 re-queue anything unfinished after a restart (partial files resume).
 
