@@ -569,14 +569,18 @@ impl Builder {
         })
     }
 
+    /// Director, writers and `n` cast members. Stepping through the pools by
+    /// a stride coprime to their length means nobody appears twice.
     fn people(seed: u64, n: usize) -> (Value, Value, Value) {
-        let pick = |i: usize| PEOPLE[((seed >> (i % 8)) as usize + i * 7) % PEOPLE.len()];
+        let start = (seed % PEOPLE.len() as u64) as usize;
+        let person = |i: usize| PEOPLE[(start + i * 7) % PEOPLE.len()];
+        let role_start = ((seed >> 5) % ROLES.len() as u64) as usize;
         let cast: Vec<Value> = (0..n)
-            .map(|i| json!({"tag": pick(i + 3), "role": ROLES[((seed >> 3) as usize + i * 5) % ROLES.len()]}))
+            .map(|i| json!({"tag": person(i + 3), "role": ROLES[(role_start + i * 5) % ROLES.len()]}))
             .collect();
         (
-            json!([{"tag": pick(0)}]),
-            json!([{"tag": pick(1)}, {"tag": pick(2)}]),
+            json!([{"tag": person(0)}]),
+            json!([{"tag": person(1)}, {"tag": person(2)}]),
             Value::Array(cast),
         )
     }

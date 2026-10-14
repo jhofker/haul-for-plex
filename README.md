@@ -11,6 +11,21 @@ line or through a simple web interface.
 - Files are renamed into a layout Plex, Jellyfin and friends understand
 - One static binary, or a ~40 MB Docker image
 
+## Screenshots
+
+The web interface (`haul serve`), shown here with made-up media from
+`haul-demo`:
+
+![Browsing a library, with filters and covers](docs/screenshots/library.png)
+
+![A movie with two versions to choose from](docs/screenshots/movie.png)
+
+![Searching across servers; episodes say which show they are from](docs/screenshots/search.png)
+
+![The download queue with progress](docs/screenshots/downloads.png)
+
+![A show in dark mode, with a version picker for the whole series](docs/screenshots/show-dark.png)
+
 ## Install
 
 **Prebuilt binary:** download the archive for your platform from the

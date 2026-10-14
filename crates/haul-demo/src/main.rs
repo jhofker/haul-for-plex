@@ -80,9 +80,7 @@ async fn main() -> Result<()> {
     haul_web::serve(args.bind, settings).await
 }
 
-/// Queue a handful of downloads so the Downloads page has something on it:
-/// one the owner has disabled (fails at once), a short show (finishes), a big
-/// 4K movie (in progress) and a season behind it (queued).
+/// Queue a handful of downloads so the Downloads page has something on it.
 async fn seed(
     bind: SocketAddr,
     servers: &[std::sync::Arc<haul_demo::catalog::Server>],
@@ -97,23 +95,32 @@ async fn seed(
     }
     let atlas = &servers[0];
     let lighthouse = &servers[1];
+    // Episodes of a season, by number (1-based).
+    let episode = |show: &str, season: usize, n: usize| -> Result<&str> {
+        let season = atlas.season(show, season).context("season")?;
+        atlas.items[season]
+            .children
+            .get(n - 1)
+            .map(String::as_str)
+            .context("episode")
+    };
+    // Queued in this order and run two at a time, so the page ends up with a
+    // refused download, two finished, two in progress and one waiting.
     let queue: Vec<(&str, &str, Option<&str>)> = vec![
         (
             &lighthouse.id,
             lighthouse.find("Tidewater").context("Tidewater")?,
             None,
         ),
-        (&atlas.id, atlas.find("Foxglove").context("Foxglove")?, None),
+        (&atlas.id, episode("Foxglove", 1, 1)?, None),
+        (&atlas.id, episode("Foxglove", 1, 2)?, None),
         (
             &atlas.id,
             atlas.find("Orbit Seven").context("Orbit Seven")?,
             Some("2"),
         ),
-        (
-            &atlas.id,
-            atlas.season("Harbor Lights", 1).context("Harbor Lights")?,
-            None,
-        ),
+        (&atlas.id, episode("Harbor Lights", 1, 1)?, None),
+        (&atlas.id, episode("Harbor Lights", 1, 2)?, None),
     ];
     for (server, key, version) in queue {
         let mut form = Vec::new();
