@@ -142,7 +142,6 @@ $ cargo clippy --workspace --all-targets -- -D warnings
 
 The workspace has three crates: `haul-core` (Plex clients, naming, downloader),
 `haul-for-plex` (the `haul` binary, in `crates/haul-cli`) and `haul-web` (the web interface).
-See `PLAN.md` for the design notes.
 
 Releasing: bump `version` in the workspace `Cargo.toml` and the two `haul-*`
 dependency versions beside it, commit, then push a `vX.Y.Z` tag. That builds
