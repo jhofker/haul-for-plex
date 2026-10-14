@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/haul-core", "crates/haul-cli", "crates/haul-web"]
+members = ["crates/haul-core", "crates/haul-cli", "crates/haul-web", "crates/haul-demo"]
 
 [workspace.package]
 version = "0.2.0"

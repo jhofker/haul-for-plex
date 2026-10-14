@@ -1,0 +1,23 @@
+[package]
+name = "haul-demo"
+description = "Fake Plex servers with made-up media, for trying out and screenshotting the web interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "haul-demo"
+path = "src/main.rs"
+
+[dependencies]
+haul-core.workspace = true
+haul-web.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

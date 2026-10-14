@@ -129,6 +129,11 @@ The workspace has three crates: `haul-core` (Plex clients, naming, downloader),
 `haul-for-plex` (the `haul` binary, in `crates/haul-cli`) and `haul-web` (the web interface).
 See `PLAN.md` for the design notes.
 
+To try the web interface (or take screenshots) without a Plex account, run
+`cargo run -p haul-demo`. It starts the real interface against fake servers
+with made-up movies and shows. The `haul-demo` crate is `publish = false`:
+it is not part of the `haul` binary, the Docker image or crates.io.
+
 ## Disclaimer
 
 Haul for Plex is an independent project. It is not affiliated with, endorsed
