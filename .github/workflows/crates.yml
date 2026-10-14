@@ -1,0 +1,71 @@
+name: Crates
+
+# Publishes haul-core, haul-web and haul-for-plex (the `haul` binary) to
+# crates.io when a version tag is pushed. Re-running is safe: versions that are
+# already published are skipped.
+#
+# Authentication is crates.io "trusted publishing" (a short-lived token from
+# GitHub's OIDC, no stored secret). One-time setup, for each of the three
+# crates on crates.io: Settings > Trusted Publishing > add GitHub repository
+# jhofker/haul-for-plex, workflow filename `crates.yml`.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag matches the crate version
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "haul-core") | .version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match crate version ${version}"
+            exit 1
+          fi
+          # The haul-* dependencies in the workspace Cargo.toml carry a version
+          # too (crates.io needs it); they must be bumped with the crate version.
+          stale=$(cargo metadata --no-deps --format-version 1 --locked \
+            | jq -r --arg v "$version" \
+              '.packages[] | .name as $p | .dependencies[]
+               | select(.name | startswith("haul-")) | select(.req != "^" + $v)
+               | "\($p) depends on \(.name) \(.req)"')
+          if [ -n "$stale" ]; then
+            echo "::error::internal dependency versions are out of date for ${version}:"
+            echo "$stale"
+            exit 1
+          fi
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish, dependencies first
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for crate in haul-core haul-web haul-for-plex; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' \
+              -A "haul-for-plex release workflow" \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}")
+            if [ "$status" = "200" ]; then
+              echo "${crate} ${VERSION} is already on crates.io; skipping"
+              continue
+            fi
+            cargo publish -p "$crate" --locked
+          done
