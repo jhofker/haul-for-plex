@@ -22,7 +22,7 @@ macOS and Windows).
 **From source:** `cargo install --path crates/haul-cli`.
 
 **Docker:** `docker pull ghcr.io/jhofker/haul-for-plex` (`latest` is the newest
-release; pin `0.1` or `0.1.0` to stay on a version)
+release; pin `0.2` or `0.2.0` to stay on a version)
 
 ## Command line
 
@@ -31,8 +31,8 @@ $ haul login                       # prints a link; approve it in your browser
 $ haul servers                     # your servers and how each is reachable
 $ haul libraries "Home"            # server names can be abbreviated
 $ haul ls "Home" movies            # a library, or any item key
-$ haul ls "Home" movies --sort added:desc --filter alien --year 1979
-$ haul search "blade runner"       # across all your servers
+$ haul ls "Home" movies --sort added:desc --filter lantern --year 2012
+$ haul search "lantern keeper"      # across all your servers
 $ haul download "Home" 84521       # a movie, episode, season or show key
 $ haul download "Home" 100583 --parallel 4 --dry-run
 $ haul download "Home" 84521 --version 4k   # pick a version
@@ -47,8 +47,8 @@ size are skipped; a file of a different size is only replaced with `--force`.
 ## Where files go
 
 ```text
-<movies-dir>/The Matrix (1999)/The Matrix (1999).mkv
-<tv-dir>/The Office (US) (2005)/Season 06/The Office (US) - S06E16 - The Manager and the Salesman.mkv
+<movies-dir>/The Lantern Keeper (2012)/The Lantern Keeper (2012).mkv
+<tv-dir>/Harbor Lights (2019)/Season 02/Harbor Lights - S02E05 - The Long Tide.mkv
 ```
 
 Set the folders with `--movies-dir` / `--tv-dir` or the environment variables
@@ -128,15 +128,6 @@ $ cargo clippy --workspace --all-targets -- -D warnings
 The workspace has three crates: `haul-core` (Plex clients, naming, downloader),
 `haul-for-plex` (the `haul` binary, in `crates/haul-cli`) and `haul-web` (the web interface).
 See `PLAN.md` for the design notes.
-
-## Upgrading from plex-grabber
-
-This project used to be called plex-grabber. The binary is now `haul`, the
-environment variables start with `HAUL_` instead of `PLEX_GRABBER_`, and the
-Docker image is `ghcr.io/jhofker/haul-for-plex`. The default config folder
-changed too (`~/.config/haul` on Linux), so either move your old `config.json`
-there or run `haul login` again. Docker users who mount `/config` keep their
-sign-in.
 
 ## Disclaimer
 
