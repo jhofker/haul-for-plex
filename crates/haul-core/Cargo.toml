@@ -1,5 +1,6 @@
 [package]
 name = "haul-core"
+readme = "README.md"
 description = "Plex account sign-in, server discovery, library browsing and resumable downloads; the engine behind Haul for Plex"
 version.workspace = true
 edition.workspace = true

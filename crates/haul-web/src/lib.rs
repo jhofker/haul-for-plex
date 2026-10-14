@@ -1,4 +1,4 @@
-//! The Haul for Plex web interface: browse your Plex servers and queue downloads.
+#![doc = include_str!("../README.md")]
 
 mod downloads;
 mod guard;

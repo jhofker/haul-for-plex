@@ -1,4 +1,4 @@
-//! Core library for Haul for Plex: configuration, Plex API clients and downloads.
+#![doc = include_str!("../README.md")]
 
 pub mod config;
 pub mod download;

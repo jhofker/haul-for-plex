@@ -1,5 +1,6 @@
 [package]
 name = "haul-web"
+readme = "README.md"
 description = "Web interface (axum + htmx) for Haul for Plex"
 version.workspace = true
 edition.workspace = true
