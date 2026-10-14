@@ -1,5 +1,16 @@
-FROM rust:1-bookworm AS build
+# cargo-chef builds the dependencies in their own layer, so a source-only change
+# doesn't recompile the ~300 crates they pull in.
+FROM lukemathwalker/cargo-chef:latest-rust-1-bookworm AS chef
 WORKDIR /src
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p haul-for-plex --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 RUN cargo build --release --locked -p haul-for-plex
