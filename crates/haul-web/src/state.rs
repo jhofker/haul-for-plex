@@ -9,7 +9,7 @@ use haul_core::{
     ClientInfo, Config, ConfigStore, Error, Layout, PlexTvClient, Resource, Result, ServerClient,
 };
 
-use crate::downloads::Downloads;
+use crate::downloads::{self, Downloads};
 
 /// How long the list of servers from plex.tv is reused.
 const SERVER_LIST_TTL: Duration = Duration::from_secs(60);
@@ -27,6 +27,14 @@ pub struct Settings {
     pub parallel: usize,
     /// Alternative plex.tv address, for tests.
     pub plextv_url: Option<String>,
+    /// Waits between attempts when a server drops.
+    pub retry: haul_core::RetryPolicy,
+}
+
+impl Settings {
+    /// The usual wait between attempts when a server drops: 5 seconds,
+    /// doubling up to 5 minutes, for as long as it takes.
+    pub const DEFAULT_RETRY: haul_core::RetryPolicy = downloads::RETRY;
 }
 
 #[derive(Clone)]
@@ -41,15 +49,37 @@ struct Inner {
 }
 
 impl AppState {
+    /// Set up the app and start the saved download queue, which lives next
+    /// to the config file as `queue.json`.
     pub fn new(settings: Settings) -> Self {
-        let downloads = Downloads::new(settings.parallel);
-        AppState(Arc::new(Inner {
+        let queue = settings.store.path().with_file_name("queue.json");
+        let downloads = Downloads::new(settings.parallel, Some(queue), settings.retry);
+        let state = AppState(Arc::new(Inner {
             settings,
             downloads,
             pending_pin: Mutex::new(None),
             servers: Mutex::new(None),
             clients: Mutex::new(HashMap::new()),
-        }))
+        }));
+        // Weak, so the queue's tasks don't keep the app alive.
+        let weak = Arc::downgrade(&state.0);
+        state
+            .0
+            .downloads
+            .start(Arc::new(move |id: String, fresh: bool| {
+                let weak = weak.clone();
+                Box::pin(async move {
+                    let state = AppState(weak.upgrade().ok_or(Error::Unreachable {
+                        server: id.clone(),
+                        attempts: Vec::new(),
+                    })?);
+                    if fresh {
+                        state.0.clients.lock().unwrap().remove(&id);
+                    }
+                    Ok(state.server(&id).await?.1)
+                })
+            }));
+        state
     }
 
     pub fn settings(&self) -> &Settings {

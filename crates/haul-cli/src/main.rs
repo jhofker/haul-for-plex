@@ -108,6 +108,10 @@ enum Command {
         /// Replace an existing file that has a different size.
         #[arg(long)]
         force: bool,
+        /// How many times to retry a file when the server drops or answers
+        /// with a temporary error, waiting longer each time. 0 disables.
+        #[arg(long, default_value_t = 5, value_name = "N")]
+        retries: u32,
     },
     /// Run the web interface.
     Serve {
@@ -207,6 +211,7 @@ async fn run(cli: Cli) -> Result<()> {
             version,
             dry_run,
             force,
+            retries,
         } => {
             let options = download::Options {
                 server,
@@ -218,6 +223,7 @@ async fn run(cli: Cli) -> Result<()> {
                 dry_run,
                 force,
                 json: cli.json,
+                retries,
             };
             download::run(context::Context::load(store)?, options).await?
         }
@@ -235,6 +241,7 @@ async fn run(cli: Cli) -> Result<()> {
                 parallel: usize::from(parallel),
                 // Undocumented: lets the web UI be tested against a fake plex.tv.
                 plextv_url: std::env::var("HAUL_PLEX_TV_URL").ok(),
+                retry: haul_web::Settings::DEFAULT_RETRY,
             };
             haul_web::serve(bind, settings).await?
         }

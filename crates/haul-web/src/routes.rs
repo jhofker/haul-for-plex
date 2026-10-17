@@ -15,7 +15,10 @@ use crate::state::{AppState, Settings};
 use crate::views::{self, ItemPage, LibraryPage, PAGE_SIZE};
 
 pub fn router(settings: Settings) -> Router {
-    let state = AppState::new(settings);
+    router_for(AppState::new(settings))
+}
+
+pub(crate) fn router_for(state: AppState) -> Router {
     Router::new()
         .route("/", get(|| async { Redirect::to("/servers") }))
         .route("/login", get(login_page).post(login_start))
@@ -32,7 +35,11 @@ pub fn router(settings: Settings) -> Router {
         .route("/downloads", get(downloads))
         .route("/downloads/list", get(downloads_list))
         .route("/downloads/clear", post(downloads_clear))
+        .route("/downloads/pause", post(downloads_pause_all))
+        .route("/downloads/resume", post(downloads_resume_all))
         .route("/downloads/{id}/cancel", post(downloads_cancel))
+        .route("/downloads/{id}/pause", post(downloads_pause))
+        .route("/downloads/{id}/resume", post(downloads_resume))
         .route("/static/htmx.min.js", get(htmx))
         .route("/static/app.css", get(css))
         .route("/static/theme.js", get(theme_js))
@@ -450,7 +457,13 @@ async fn download(
     let plan = client
         .plan_download_version(&item, &state.settings().layout, &version)
         .await?;
-    state.downloads().enqueue(&client, &server.name, plan);
+    state.downloads().enqueue(
+        &server.client_identifier,
+        &server.name,
+        &key,
+        &version.to_string(),
+        plan,
+    );
     Ok(Redirect::to("/downloads").into_response())
 }
 
@@ -476,6 +489,50 @@ async fn downloads_cancel(
 ) -> Result<Redirect, AppError> {
     user(&state)?;
     state.downloads().cancel(id);
+    Ok(Redirect::to("/downloads"))
+}
+
+async fn downloads_pause(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Redirect, AppError> {
+    user(&state)?;
+    state.downloads().pause(id);
+    Ok(Redirect::to("/downloads"))
+}
+
+async fn downloads_resume(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Redirect, AppError> {
+    user(&state)?;
+    state.downloads().resume(id);
+    Ok(Redirect::to("/downloads"))
+}
+
+/// The `server` form field, if given: limits a bulk action to one server.
+fn server_field(body: &[u8]) -> Option<String> {
+    url::form_urlencoded::parse(body)
+        .find(|(k, _)| k == "server")
+        .map(|(_, v)| v.into_owned())
+        .filter(|v| !v.is_empty())
+}
+
+async fn downloads_pause_all(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> Result<Redirect, AppError> {
+    user(&state)?;
+    state.downloads().pause_all(server_field(&body).as_deref());
+    Ok(Redirect::to("/downloads"))
+}
+
+async fn downloads_resume_all(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> Result<Redirect, AppError> {
+    user(&state)?;
+    state.downloads().resume_all(server_field(&body).as_deref());
     Ok(Redirect::to("/downloads"))
 }
 
