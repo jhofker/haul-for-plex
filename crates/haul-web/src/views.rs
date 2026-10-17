@@ -1,12 +1,14 @@
 //! HTML pages, built with maud (which escapes everything interpolated).
 
 use haul_core::library::{Media, Part, Stream, Tag};
+use haul_core::mine::height_label;
 use haul_core::plextv::{Connection, Resource};
-use haul_core::{Library, Metadata, PlannedFile, format_size};
+use haul_core::{Library, Metadata, PlannedFile, Status, StatusFilter, format_size};
 use maud::{DOCTYPE, Markup, html};
 
 use crate::downloads::{Job, JobState};
 use crate::listing::{ListParams, href};
+use crate::state::Mine;
 
 pub const PAGE_SIZE: usize = 100;
 
@@ -129,23 +131,55 @@ pub fn connection_kind(conn: &Connection) -> &'static str {
     }
 }
 
-pub fn servers_page(user: &str, servers: &[Resource]) -> Markup {
+/// The servers page: other people's servers, and which of yours count as
+/// your library.
+pub struct ServersPage<'a> {
+    pub user: &'a str,
+    pub servers: &'a [Resource],
+    /// Machine ids of the servers that count as your library.
+    pub mine: &'a [String],
+    /// List your own servers too.
+    pub show_all: bool,
+    pub library: &'a Mine,
+    /// Your library is being read right now.
+    pub refreshing: bool,
+}
+
+pub fn servers_page(p: &ServersPage<'_>) -> Markup {
+    let is_mine = |s: &Resource| p.mine.contains(&s.client_identifier);
+    // Downloading from yourself is rarely wanted, so your servers are
+    // hidden unless asked for (or there's nothing else).
+    let others = p.servers.iter().filter(|s| !is_mine(s)).count();
+    let hide_mine = !p.show_all && others > 0;
+    let listed: Vec<&Resource> = p
+        .servers
+        .iter()
+        .filter(|s| !(hide_mine && is_mine(s)))
+        .collect();
+    let hidden = p.servers.len() - listed.len();
+    // Offer your own servers as choices; with none, any server.
+    let owned = p.servers.iter().any(|s| s.owned);
+    let choices: Vec<&Resource> = p
+        .servers
+        .iter()
+        .filter(|s| !owned || s.owned || is_mine(s))
+        .collect();
     layout(
         "Servers",
         "servers",
-        Some(user),
+        Some(p.user),
         html! {
             h1 { "Servers" }
-            @if !servers.is_empty() {
-                (search_form(SearchScope::default(), "", "Search all servers", None))
+            @if !p.servers.is_empty() {
+                (search_form(SearchScope::default(), "", "Search all servers", None, false))
             }
-            @if servers.is_empty() {
+            @if p.servers.is_empty() {
                 p.empty { "No servers are shared with this Plex account." }
             } @else {
                 table {
                     thead { tr { th { "Name" } th { "Owner" } th { "Version" } th { "Connection" } } }
                     tbody {
-                        @for s in servers {
+                        @for s in &listed {
                             tr {
                                 td { a href={"/servers/" (s.client_identifier)} { (s.name) } }
                                 td { (owner(s)) }
@@ -156,9 +190,74 @@ pub fn servers_page(user: &str, servers: &[Resource]) -> Markup {
                         }
                     }
                 }
+                @if hidden > 0 {
+                    p.muted {
+                        "Your own " @if hidden == 1 { "server is" } @else { "servers are" } " hidden. "
+                        a href="/servers?all=1" { "Show" }
+                    }
+                } @else if p.show_all && others > 0 && p.servers.len() > others {
+                    p.muted { a href="/servers" { "Hide your own servers" } }
+                }
+                (my_library_card(p, &choices))
             }
         },
     )
+}
+
+fn my_library_card(p: &ServersPage<'_>, choices: &[&Resource]) -> Markup {
+    html! {
+        div.card #my-library {
+            h2 { "My library" }
+            p.muted {
+                "Haul compares other servers with these, to show what you already have, "
+                "what's missing and where a better copy is on offer."
+            }
+            form method="post" action="/servers/mine" {
+                @for s in choices {
+                    div {
+                        label {
+                            input type="checkbox" name="server" value=(s.client_identifier)
+                                checked[p.mine.contains(&s.client_identifier)];
+                            " " (s.name)
+                            @if !s.owned { " " span.muted { "(" (owner(s)) ")" } }
+                        }
+                    }
+                }
+                div.row style="margin-top:.5rem" {
+                    button type="submit" { "Save" }
+                }
+            }
+            @match p.library {
+                Mine::Ready(lib) => {
+                    @let (movies, shows) = lib.counts();
+                    p.muted {
+                        (movies) " movies and " (shows) " shows, read "
+                        (ago(lib.age().as_secs())) "."
+                        @if p.refreshing { " Reading again…" }
+                    }
+                    @for name in &lib.skipped { p.bad { "Couldn't read " (name) "." } }
+                }
+                Mine::Loading => { p.muted { "Reading your library…" } }
+                Mine::Off => {}
+            }
+            @if !matches!(p.library, Mine::Off) {
+                form method="post" action="/servers/mine/refresh" {
+                    button.link type="submit" { "Read again now" }
+                }
+            }
+        }
+    }
+}
+
+/// `just now`, `5 minutes ago`, `2 hours ago`.
+fn ago(secs: u64) -> String {
+    match secs {
+        0..60 => "just now".into(),
+        60..120 => "a minute ago".into(),
+        120..3600 => format!("{} minutes ago", secs / 60),
+        3600..7200 => "an hour ago".into(),
+        _ => format!("{} hours ago", secs / 3600),
+    }
 }
 
 pub fn server_status(result: Result<(&Connection, u128), String>) -> Markup {
@@ -179,10 +278,11 @@ pub fn libraries_page(user: &str, server: &Resource, libraries: &[Library]) -> M
             div.crumbs { a href="/servers" { "Servers" } }
             h1 { (server.name) }
             (search_form(
-                SearchScope { server: Some(&server.client_identifier), library: None },
+                SearchScope { server: Some(&server.client_identifier), library: None, include_mine: false },
                 "",
                 &format!("Search {}", server.name),
                 None,
+                false,
             ))
             @if libraries.is_empty() {
                 p.empty { "This server has no libraries you can access." }
@@ -253,15 +353,26 @@ fn cover(server_id: &str, m: &Metadata, large: bool) -> Markup {
 /// `context` adds the show an episode or season belongs to (for search results,
 /// where items aren't listed under their show).
 /// `empty` is shown instead of the table when there are no items.
-fn items_table(server_id: &str, items: &[Metadata], context: bool, empty: &str) -> Markup {
+/// `statuses`, when comparing with your library, holds each item's status.
+fn items_table(
+    server_id: &str,
+    items: &[Metadata],
+    statuses: Option<&[Option<Status>]>,
+    context: bool,
+    empty: &str,
+) -> Markup {
     html! {
         @if items.is_empty() {
             p.empty { (empty) }
         } @else {
             table {
-                thead { tr { th { "Title" } th { "Type" } th { "Details" } } }
+                thead { tr {
+                    th { "Title" }
+                    @if statuses.is_some() { th { "Your library" } }
+                    th { "Type" } th { "Details" }
+                } }
                 tbody {
-                    @for m in items {
+                    @for (i, m) in items.iter().enumerate() {
                         tr {
                             td {
                                 div.titlecell {
@@ -286,12 +397,36 @@ fn items_table(server_id: &str, items: &[Metadata], context: bool, empty: &str) 
                                     }
                                 }
                             }
+                            @if let Some(statuses) = statuses {
+                                td { @if let Some(status) = statuses[i] { (status_badge(status)) } }
+                            }
                             td { span.badge { (m.kind) } }
                             td.muted { (item_detail(m)) }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// How an item compares with your library, as a coloured badge.
+pub fn status_badge(status: Status) -> Markup {
+    let class = format!("badge st-{}", status.name());
+    let label = match status {
+        Status::Upgrade { .. } => "Upgrade".to_string(),
+        other => other.label(),
+    };
+    html! {
+        span class=(class) title=[matches!(status, Status::Upgrade { .. }).then(|| status.label())] { (label) }
+    }
+}
+
+/// A line saying your library is still being read, when it is.
+fn mine_note(mine: &Mine) -> Markup {
+    html! {
+        @if matches!(mine, Mine::Loading) {
+            p.muted.note { "Comparing with your library… reload in a moment to see what you already have." }
         }
     }
 }
@@ -306,6 +441,9 @@ pub struct LibraryPage<'a> {
     /// How many items match the filter, across all pages.
     pub total: usize,
     pub params: &'a ListParams,
+    pub mine: &'a Mine,
+    /// Each item's status, when comparing with your library.
+    pub statuses: Option<&'a [Option<Status>]>,
 }
 
 pub fn library_page(p: &LibraryPage<'_>) -> Markup {
@@ -318,6 +456,8 @@ pub fn library_page(p: &LibraryPage<'_>) -> Markup {
         page,
         total,
         params,
+        mine,
+        statuses,
     } = *p;
     let pages = total.div_ceil(PAGE_SIZE).max(1);
     let base = format!(
@@ -329,7 +469,8 @@ pub fn library_page(p: &LibraryPage<'_>) -> Markup {
         pairs.push(("page", n.to_string()));
         href(&base, &pairs)
     };
-    let filtered = params.view().filter != haul_core::Filter::default();
+    let filtered =
+        params.view().filter != haul_core::Filter::default() || params.status().is_some();
     layout(
         library_title,
         "servers",
@@ -341,10 +482,11 @@ pub fn library_page(p: &LibraryPage<'_>) -> Markup {
             }
             h1 { (library_title) }
             (search_form(
-                SearchScope { server: Some(&server.client_identifier), library: Some(library_key) },
+                SearchScope { server: Some(&server.client_identifier), library: Some(library_key), include_mine: false },
                 "",
                 &format!("Search {library_title}"),
                 None,
+                false,
             ))
             (list_controls(&ListControls {
                 action: &base,
@@ -353,11 +495,14 @@ pub fn library_page(p: &LibraryPage<'_>) -> Markup {
                 default_sort: "Title, A–Z",
                 title: true,
                 year: true,
+                status: !matches!(mine, Mine::Off),
             }))
+            (mine_note(mine))
             p.muted { (total) @if filtered { " matching" } " items" }
             (items_table(
                 &server.client_identifier,
                 items,
+                statuses,
                 false,
                 if filtered { "Nothing matches these filters." } else { "Nothing here." },
             ))
@@ -429,6 +574,24 @@ fn sort_select(options: &[SortOption], default_label: &str, current: &str) -> Ma
     }
 }
 
+const STATUSES: [(StatusFilter, &str); 3] = [
+    (StatusFilter::Missing, "Missing from my library"),
+    (StatusFilter::Upgrade, "Upgrades"),
+    (StatusFilter::Have, "Already have"),
+];
+
+fn status_select(params: &ListParams) -> Markup {
+    let current = params.status();
+    html! {
+        select name="status" aria-label="Compared with my library" {
+            option value="" selected[current.is_none()] { "In my library or not" }
+            @for (value, label) in STATUSES {
+                option value=(value.name()) selected[current == Some(value)] { (label) }
+            }
+        }
+    }
+}
+
 fn kind_select(params: &ListParams) -> Markup {
     let current = params.view().filter.kind.unwrap_or_default();
     html! {
@@ -452,6 +615,8 @@ struct ListControls<'a> {
     title: bool,
     /// Offer a year box.
     year: bool,
+    /// Offer a menu comparing with your library.
+    status: bool,
 }
 
 /// Filter and sort controls above a list. Menus apply as soon as they
@@ -472,6 +637,7 @@ fn list_controls(c: &ListControls<'_>) -> Markup {
                     placeholder="Year" aria-label="Year";
             }
             (sort_select(c.sorts, c.default_sort, &c.params.sort_value()))
+            @if c.status { (status_select(c.params)) }
             button type="submit" { "Apply" }
             @if !c.params.is_default() { a href=(c.action) { "Clear" } }
         }
@@ -493,6 +659,14 @@ pub struct ItemPage<'a> {
     /// For a movie or episode with several versions: each version's number
     /// (1-based) and what downloading it would save.
     pub version_plans: &'a [(usize, Vec<PlannedFile>)],
+    pub mine: &'a Mine,
+    /// How the item compares with your library.
+    pub status: Option<Status>,
+    /// Each child's status, when comparing.
+    pub child_statuses: Option<&'a [Option<Status>]>,
+    /// For a show or season you partly have: what downloading just the
+    /// missing episodes would save.
+    pub missing_plan: &'a [PlannedFile],
 }
 
 pub fn item_page(p: &ItemPage<'_>) -> Markup {
@@ -512,10 +686,32 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
                 (cover(id, p.item, true))
                 div {
                     h1 { (item_title(p.item)) }
-                    p { span.badge { (p.item.kind) } " " span.muted { (item_detail(p.item)) } }
+                    p {
+                        span.badge { (p.item.kind) } " "
+                        @if let Some(status) = p.status { (status_badge(status)) " " }
+                        span.muted { (item_detail(p.item)) }
+                    }
+                    @if let Some(Status::Upgrade { mine, theirs }) = p.status {
+                        p.muted { "Your library has this in " (height_label(mine)) "; this copy is " (height_label(theirs)) "." }
+                    }
                     (about(p.item))
                 }
             }
+
+            @if !p.missing_plan.is_empty() {
+                div.card {
+                    form method="post" action={"/servers/" (id) "/items/" (p.item.rating_key) "/download"} {
+                        input type="hidden" name="missing" value="1";
+                        button.primary type="submit" {
+                            "Download " (p.missing_plan.len()) " missing "
+                            @if p.missing_plan.len() == 1 { "episode" } @else { "episodes" }
+                            " (" (format_size(p.missing_plan.iter().filter_map(|f| f.part.size).sum())) ")"
+                        }
+                    }
+                    p.muted { "Only the episodes your library doesn't have." }
+                }
+            }
+            (mine_note(p.mine))
 
             @if !p.plan.is_empty() {
                 div.card {
@@ -574,10 +770,11 @@ pub fn item_page(p: &ItemPage<'_>) -> Markup {
                     default_sort: if p.item.kind == "show" { "Season order" } else { "Episode order" },
                     title: true,
                     year: false,
+                    status: p.child_statuses.is_some(),
                 }))
             }
             @if p.child_count > 0 {
-                (items_table(id, p.children, false, "Nothing matches these filters."))
+                (items_table(id, p.children, p.child_statuses, false, "Nothing matches these filters."))
             }
         },
     )
@@ -804,8 +1001,11 @@ fn part_block(index: usize, count: usize, p: &Part) -> Markup {
     }
 }
 
+/// One server's results, with each item's status when comparing.
+pub type ServerResults = (Resource, Vec<Metadata>, Option<Vec<Option<Status>>>);
+
 pub struct SearchResults<'a> {
-    pub found: &'a [(Resource, Vec<Metadata>)],
+    pub found: &'a [ServerResults],
     /// Names of servers that could not be searched.
     pub skipped: &'a [String],
 }
@@ -815,15 +1015,19 @@ pub struct SearchResults<'a> {
 pub struct SearchScope<'a> {
     pub server: Option<&'a str>,
     pub library: Option<&'a str>,
+    /// Search your own servers too, when searching everywhere.
+    pub include_mine: bool,
 }
 
 /// Search box that swaps just the page's `<main>` and shows a spinner meanwhile.
 /// With `params`, it also offers type and sort menus for the results.
+/// `status` adds the menu comparing with your library.
 pub fn search_form(
     scope: SearchScope<'_>,
     query: &str,
     placeholder: &str,
     params: Option<&ListParams>,
+    status: bool,
 ) -> Markup {
     html! {
         form.row.search method="get" action="/search"
@@ -832,10 +1036,12 @@ pub fn search_form(
             data-autosubmit {
             @if let Some(server) = scope.server { input type="hidden" name="server" value=(server); }
             @if let Some(library) = scope.library { input type="hidden" name="library" value=(library); }
+            @if scope.include_mine { input type="hidden" name="mine" value="1"; }
             input type="search" name="q" value=(query) placeholder=(placeholder);
             @if let Some(params) = params {
                 (kind_select(params))
                 (sort_select(SEARCH_SORTS, "Best match", &params.sort_value()))
+                @if status { (status_select(params)) }
             }
             button.primary type="submit" { "Search" }
             span.spinner #search-spinner role="status" aria-label="Searching" {}
@@ -852,6 +1058,17 @@ pub struct SearchPage<'a> {
     pub library_title: Option<&'a str>,
     pub params: &'a ListParams,
     pub results: Option<SearchResults<'a>>,
+    pub mine: &'a Mine,
+    /// How many of your own servers were left out of an everywhere search.
+    pub hidden_mine: usize,
+}
+
+/// The same search, including your own servers.
+fn include_mine_link(query: &str, params: &ListParams) -> String {
+    let mut pairs = vec![("q", query.to_string())];
+    pairs.extend(params.pairs());
+    pairs.push(("mine", "1".into()));
+    href("/search", &pairs)
 }
 
 pub fn search_page(p: &SearchPage<'_>) -> Markup {
@@ -875,10 +1092,11 @@ pub fn search_page(p: &SearchPage<'_>) -> Markup {
                 }
             }
             h1 { "Search" }
-            (search_form(p.scope, p.query, &place, Some(p.params)))
+            (search_form(p.scope, p.query, &place, Some(p.params), !matches!(p.mine, Mine::Off)))
             @if let Some(results) = &p.results {
+                (mine_note(p.mine))
                 @for name in results.skipped { p.muted { "Skipped " (name) " (unreachable)" } }
-                @if results.found.iter().all(|(_, items)| items.is_empty()) {
+                @if results.found.iter().all(|(_, items, _)| items.is_empty()) {
                     p.empty {
                         @if let Some(kind) = kind_label(p.params) {
                             "No " (kind.to_lowercase()) " found for “" (p.query) "”."
@@ -887,10 +1105,16 @@ pub fn search_page(p: &SearchPage<'_>) -> Markup {
                         }
                     }
                 }
-                @for (server, items) in results.found {
+                @for (server, items, statuses) in results.found {
                     @if !items.is_empty() {
                         @if p.scope.server.is_none() { h2 { (server.name) } }
-                        (items_table(&server.client_identifier, items, true, ""))
+                        (items_table(&server.client_identifier, items, statuses.as_deref(), true, ""))
+                    }
+                }
+                @if p.hidden_mine > 0 {
+                    p.muted {
+                        "Your own " @if p.hidden_mine == 1 { "server wasn't" } @else { "servers weren't" } " searched. "
+                        a href=(include_mine_link(p.query, p.params)) { "Search them too" }
                     }
                 }
             }

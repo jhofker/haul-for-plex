@@ -20,6 +20,8 @@ pub struct Options {
     pub version: haul_core::VersionChoice,
     pub dry_run: bool,
     pub force: bool,
+    /// Only movies and episodes missing from your own library.
+    pub only_missing: bool,
     pub json: bool,
 }
 
@@ -45,9 +47,25 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     let item = client.metadata(&opts.key).await?;
 
     let layout = layout(opts.movies_dir, opts.tv_dir);
-    let files = client
-        .plan_download_version(&item, &layout, &opts.version)
-        .await?;
+    let files = if opts.only_missing {
+        let mine = ctx.my_library(false).await?;
+        let files = client
+            .plan_download_filtered(&item, &layout, &opts.version, mine.missing_under(&item))
+            .await?;
+        if files.is_empty() {
+            if opts.json {
+                crate::output::json(&Vec::<()>::new());
+            } else {
+                println!("Nothing to download: your library already has all of it.");
+            }
+            return Ok(());
+        }
+        files
+    } else {
+        client
+            .plan_download_version(&item, &layout, &opts.version)
+            .await?
+    };
 
     let total: u64 = files.iter().filter_map(|f| f.part.size).sum();
     if opts.dry_run && opts.json {

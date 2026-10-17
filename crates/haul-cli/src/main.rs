@@ -2,6 +2,7 @@ mod auth;
 mod browse;
 mod context;
 mod download;
+mod mine;
 mod output;
 mod search;
 mod servers;
@@ -67,6 +68,15 @@ enum Command {
         /// reverse, e.g. `--sort added:desc` for the most recently added first.
         #[arg(long, value_name = "KEY[:asc|:desc]")]
         sort: Option<haul_core::Sort>,
+        /// Show how each item compares with your own library: have it,
+        /// upgrade (a higher resolution than yours), or missing.
+        #[arg(short, long)]
+        compare: bool,
+        /// Only list items that are missing from your library (or shows and
+        /// seasons with missing episodes), upgrades, or ones you have.
+        /// Implies --compare.
+        #[arg(long, value_name = "missing|upgrade|have")]
+        status: Option<haul_core::StatusFilter>,
     },
     /// Search for movies, shows and episodes across your servers.
     Search {
@@ -78,6 +88,15 @@ enum Command {
         /// Maximum results per type on each server.
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+        /// Show how each item compares with your own library: have it,
+        /// upgrade (a higher resolution than yours), or missing.
+        #[arg(short, long)]
+        compare: bool,
+        /// Only show items that are missing from your library (or shows and
+        /// seasons with missing episodes), upgrades, or ones you have.
+        /// Implies --compare.
+        #[arg(long, value_name = "missing|upgrade|have")]
+        status: Option<haul_core::StatusFilter>,
     },
     /// Download a movie, episode, season or whole show into the Plex-style folder layout.
     ///
@@ -108,6 +127,22 @@ enum Command {
         /// Replace an existing file that has a different size.
         #[arg(long)]
         force: bool,
+        /// Only download the movies and episodes your own library doesn't
+        /// have, e.g. the missing episodes of a show.
+        #[arg(long)]
+        only_missing: bool,
+    },
+    /// Show or choose which servers count as your own library, for
+    /// `--compare` and `--only-missing`. By default, every server you own.
+    MyLibrary {
+        /// Servers to count (names, starts of names, or machine ids).
+        servers: Vec<String>,
+        /// Go back to counting every server you own.
+        #[arg(long, conflicts_with = "servers")]
+        owned: bool,
+        /// Read your library again now instead of using the saved copy.
+        #[arg(long)]
+        refresh: bool,
     },
     /// Run the web interface.
     Serve {
@@ -166,6 +201,8 @@ async fn run(cli: Cli) -> Result<()> {
             filter,
             year,
             sort,
+            compare,
+            status,
         } => {
             let view = haul_core::View {
                 filter: haul_core::Filter {
@@ -180,6 +217,10 @@ async fn run(cli: Cli) -> Result<()> {
                 &server,
                 &target,
                 &view,
+                browse::Compare {
+                    enabled: compare,
+                    status,
+                },
                 cli.json,
             )
             .await?
@@ -188,12 +229,18 @@ async fn run(cli: Cli) -> Result<()> {
             query,
             server,
             limit,
+            compare,
+            status,
         } => {
             search::search(
                 context::Context::load(store)?,
                 &query,
                 server.as_deref(),
                 limit,
+                browse::Compare {
+                    enabled: compare,
+                    status,
+                },
                 cli.json,
             )
             .await?
@@ -207,6 +254,7 @@ async fn run(cli: Cli) -> Result<()> {
             version,
             dry_run,
             force,
+            only_missing,
         } => {
             let options = download::Options {
                 server,
@@ -217,9 +265,24 @@ async fn run(cli: Cli) -> Result<()> {
                 version,
                 dry_run,
                 force,
+                only_missing,
                 json: cli.json,
             };
             download::run(context::Context::load(store)?, options).await?
+        }
+        Command::MyLibrary {
+            servers,
+            owned,
+            refresh,
+        } => {
+            mine::run(
+                context::Context::load(store)?,
+                &servers,
+                owned,
+                refresh,
+                cli.json,
+            )
+            .await?
         }
         Command::Serve {
             bind,

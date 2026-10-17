@@ -10,6 +10,13 @@ use crate::server::ServerClient;
 /// Items fetched per request when listing a whole library.
 const PAGE_SIZE: usize = 500;
 
+/// Asks listings to include outside ids (`Guid`), used to match items
+/// between servers.
+const INCLUDE_GUIDS: (&str, &str) = ("includeGuids", "1");
+
+/// Plex's number for the episode type, for listing a library's episodes.
+const EPISODE_TYPE: u8 = 4;
+
 /// A library section, e.g. "Movies" or "TV Shows".
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +37,20 @@ pub struct Metadata {
     #[serde(rename = "type")]
     pub kind: String,
     pub title: String,
+    /// Plex's own id for the item, e.g. `plex://movie/5d77...`; older agents
+    /// use forms like `com.plexapp.agents.imdb://tt0111161?lang=en`.
+    #[serde(default)]
+    pub guid: Option<String>,
+    /// Ids from outside databases, e.g. `imdb://tt0111161` or `tmdb://278`.
+    /// Listings only include them when asked (`includeGuids=1`).
+    #[serde(default, rename = "Guid")]
+    pub guids: Vec<Guid>,
+    /// The season's `guid`, for episodes; the show's, for seasons.
+    #[serde(default)]
+    pub parent_guid: Option<String>,
+    /// The show's `guid`, for episodes.
+    #[serde(default)]
+    pub grandparent_guid: Option<String>,
     /// Title to sort by, e.g. `Matrix` for `The Matrix`; only sent when it differs.
     #[serde(default)]
     pub title_sort: Option<String>,
@@ -114,6 +135,12 @@ pub struct Tag {
     /// Character name, on cast entries.
     #[serde(default)]
     pub role: Option<String>,
+}
+
+/// An outside id for an item, e.g. `imdb://tt0111161`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Guid {
+    pub id: String,
 }
 
 impl Metadata {
@@ -333,6 +360,7 @@ impl ServerClient {
         let req = self
             .get(&format!("library/sections/{library_key}/all"))?
             .query(&view.plex_params())
+            .query(&[INCLUDE_GUIDS])
             .header("X-Plex-Container-Start", start.to_string())
             .header("X-Plex-Container-Size", size.to_string());
         let env: Envelope<MetadataList> = send(req).await?;
@@ -344,13 +372,25 @@ impl ServerClient {
     /// Every top-level item in a library (movies, or shows), filtered and
     /// sorted by the server, fetched in pages.
     pub async fn library_items(&self, library_key: &str, view: &View) -> Result<Vec<Metadata>> {
-        let path = format!("library/sections/{library_key}/all");
-        let params = view.plex_params();
+        let mut params = view.plex_params();
+        params.push((INCLUDE_GUIDS.0, INCLUDE_GUIDS.1.to_string()));
+        self.fetch_all(&format!("library/sections/{library_key}/all"), &params)
+            .await
+    }
+
+    /// Every episode in a TV library, across all shows, fetched in pages.
+    pub async fn library_episodes(&self, library_key: &str) -> Result<Vec<Metadata>> {
+        let params = [("type", EPISODE_TYPE.to_string())];
+        self.fetch_all(&format!("library/sections/{library_key}/all"), &params)
+            .await
+    }
+
+    async fn fetch_all(&self, path: &str, params: &[(&str, String)]) -> Result<Vec<Metadata>> {
         let mut items = Vec::new();
         loop {
             let req = self
-                .get(&path)?
-                .query(&params)
+                .get(path)?
+                .query(params)
                 .header("X-Plex-Container-Start", items.len().to_string())
                 .header("X-Plex-Container-Size", PAGE_SIZE.to_string());
             let env: Envelope<MetadataList> = send(req).await?;
@@ -384,7 +424,8 @@ impl ServerClient {
         let params = {
             let mut p = url::form_urlencoded::Serializer::new(String::new());
             p.append_pair("query", query)
-                .append_pair("limit", &limit.to_string());
+                .append_pair("limit", &limit.to_string())
+                .append_pair(INCLUDE_GUIDS.0, INCLUDE_GUIDS.1);
             if let Some(key) = library_key {
                 p.append_pair("sectionId", key);
             }
@@ -465,13 +506,17 @@ impl ServerClient {
 
     /// Full details of one item, including its media files.
     pub async fn metadata(&self, rating_key: &str) -> Result<Metadata> {
-        let env: Envelope<MetadataList> =
-            match send(self.get(&format!("library/metadata/{rating_key}"))?).await {
-                Err(Error::Status { status, .. }) if status == reqwest::StatusCode::NOT_FOUND => {
-                    return Err(Error::ItemNotFound(rating_key.into()));
-                }
-                other => other?,
-            };
+        let env: Envelope<MetadataList> = match send(
+            self.get(&format!("library/metadata/{rating_key}"))?
+                .query(&[INCLUDE_GUIDS]),
+        )
+        .await
+        {
+            Err(Error::Status { status, .. }) if status == reqwest::StatusCode::NOT_FOUND => {
+                return Err(Error::ItemNotFound(rating_key.into()));
+            }
+            other => other?,
+        };
         env.container
             .metadata
             .into_iter()
@@ -481,15 +526,21 @@ impl ServerClient {
 
     /// Seasons of a show, or episodes of a season.
     pub async fn children(&self, rating_key: &str) -> Result<Vec<Metadata>> {
-        let env: Envelope<MetadataList> =
-            send(self.get(&format!("library/metadata/{rating_key}/children"))?).await?;
+        let env: Envelope<MetadataList> = send(
+            self.get(&format!("library/metadata/{rating_key}/children"))?
+                .query(&[INCLUDE_GUIDS]),
+        )
+        .await?;
         Ok(env.container.metadata)
     }
 
     /// Every episode of a show (or season), across seasons.
     pub async fn all_leaves(&self, rating_key: &str) -> Result<Vec<Metadata>> {
-        let env: Envelope<MetadataList> =
-            send(self.get(&format!("library/metadata/{rating_key}/allLeaves"))?).await?;
+        let env: Envelope<MetadataList> = send(
+            self.get(&format!("library/metadata/{rating_key}/allLeaves"))?
+                .query(&[INCLUDE_GUIDS]),
+        )
+        .await?;
         Ok(env.container.metadata)
     }
 }

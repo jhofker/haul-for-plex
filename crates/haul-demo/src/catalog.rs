@@ -75,6 +75,21 @@ fn hash(s: &str) -> u64 {
     })
 }
 
+/// Made-up ids for a title, the same on every server, so servers can be
+/// compared: Plex's own `guid` and an outside id.
+fn guids(kind: &str, title: &str, year: u32) -> (String, Value) {
+    let h = hash(&format!("{title}{year}"));
+    let outside = if kind == "show" {
+        format!("tvdb://{}", 100_000 + h % 900_000)
+    } else {
+        format!("imdb://tt{:07}", h % 10_000_000)
+    };
+    (
+        format!("plex://{kind}/{h:016x}"),
+        json!([{ "id": outside }]),
+    )
+}
+
 fn tags(names: &[&str]) -> Value {
     Value::Array(names.iter().map(|n| json!({"tag": n})).collect())
 }
@@ -130,6 +145,7 @@ const ROLES: [&str; 12] = [
     "Old Sam",
 ];
 
+#[derive(Clone, Copy)]
 struct MovieSpec {
     title: &'static str,
     year: u32,
@@ -388,6 +404,7 @@ const MOVIES: &[MovieSpec] = &[
     },
 ];
 
+#[derive(Clone, Copy)]
 struct ShowSpec {
     title: &'static str,
     year: u32,
@@ -604,8 +621,10 @@ impl Builder {
             media.push(self.media(res, codec, spec.minutes, (gb * GB) as u64, &file));
             let _ = i;
         }
+        let (guid, outside) = guids("movie", spec.title, spec.year);
         let item_json = json!({
             "ratingKey": key, "type": "movie", "title": spec.title, "titleSort": sort_title(spec.title),
+            "guid": guid, "Guid": outside,
             "year": spec.year, "tagline": spec.tagline, "summary": spec.summary,
             "duration": u64::from(spec.minutes) * 60_000, "contentRating": spec.rated,
             "rating": (audience - 0.4).max(1.0), "audienceRating": audience,
@@ -641,6 +660,7 @@ impl Builder {
         let audience = 7.0 + (h % 25) as f64 / 10.0;
         let mut season_keys = Vec::new();
         let mut all_eps = 0u32;
+        let (show_guid, show_outside) = guids("show", spec.title, spec.year);
         for s in 1..=spec.seasons {
             let season_key = self.key();
             let mut ep_keys = Vec::new();
@@ -672,6 +692,7 @@ impl Builder {
                     "year": year, "index": e, "parentIndex": s, "summary": blurb,
                     "parentTitle": format!("Season {s}"), "parentRatingKey": season_key,
                     "grandparentTitle": spec.title, "grandparentRatingKey": show_key,
+                    "grandparentGuid": show_guid,
                     "duration": u64::from(spec.minutes) * 60_000, "contentRating": spec.rated,
                     "audienceRating": 6.5 + (eh % 30) as f64 / 10.0,
                     "originallyAvailableAt": aired, "addedAt": ep_added,
@@ -701,6 +722,7 @@ impl Builder {
             let season_json = json!({
                 "ratingKey": season_key, "type": "season", "title": format!("Season {s}"),
                 "index": s, "parentTitle": spec.title, "parentRatingKey": show_key,
+                "parentGuid": show_guid,
                 "leafCount": spec.episodes, "librarySectionID": section.parse::<u64>().unwrap_or(0),
                 "librarySectionTitle": section_title, "addedAt": added,
             });
@@ -723,6 +745,7 @@ impl Builder {
         }
         let show_json = json!({
             "ratingKey": show_key, "type": "show", "title": spec.title, "titleSort": sort_title(spec.title),
+            "guid": show_guid, "Guid": show_outside,
             "year": spec.year, "summary": spec.summary, "studio": spec.studio,
             "contentRating": spec.rated, "audienceRating": audience, "rating": audience - 0.3,
             "originallyAvailableAt": date(spec.year, h), "addedAt": added,
@@ -772,19 +795,37 @@ fn server(name: &str, id: &str, owner: Option<&str>) -> (Builder, Server) {
     )
 }
 
+/// Movies the friend's server has that yours doesn't.
+const NOT_ON_ATLAS: [&str; 2] = ["Copper Moon", "Kite Season"];
+
 /// The servers your demo account can see: one you own, one a friend shared.
+/// Comparing them shows some of everything: films you have, films you
+/// don't, a 4K copy of one you have in 1080p, and a show you're a season
+/// behind on.
 pub fn build() -> Vec<Server> {
-    // Atlas: yours, with every movie and show.
+    // Atlas: yours, with nearly every movie and show.
     let (mut b, mut atlas) = server("Atlas", "demo-atlas", None);
     let movies: Vec<String> = MOVIES
         .iter()
+        .filter(|m| !NOT_ON_ATLAS.contains(&m.title))
         .enumerate()
         .map(|(n, m)| b.movie(m, "1", "Movies", n))
         .collect();
     let shows: Vec<String> = SHOWS
         .iter()
         .enumerate()
-        .map(|(n, s)| b.show(s, "2", "TV Shows", n))
+        .map(|(n, s)| {
+            // A season behind on The Quiet Wing.
+            let spec = if s.title == "The Quiet Wing" {
+                ShowSpec {
+                    seasons: s.seasons - 1,
+                    ..*s
+                }
+            } else {
+                *s
+            };
+            b.show(&spec, "2", "TV Shows", n)
+        })
         .collect();
     atlas.libraries = vec![
         Library {
@@ -806,10 +847,18 @@ pub fn build() -> Vec<Server> {
     // Lighthouse: shared by a friend, a smaller selection, one title with
     // downloads switched off.
     let (mut b, mut lighthouse) = server("Lighthouse", "demo-lighthouse", Some("Margot"));
-    let pick = |titles: &[&str]| -> Vec<&'static MovieSpec> {
+    let pick = |titles: &[&str]| -> Vec<MovieSpec> {
         MOVIES
             .iter()
             .filter(|m| titles.contains(&m.title))
+            .map(|m| match m.title {
+                // A 4K copy of a film Atlas only has in 1080p.
+                "Northbound" => MovieSpec {
+                    versions: &[UHD],
+                    ..*m
+                },
+                _ => *m,
+            })
             .collect()
     };
     let films = pick(&[
