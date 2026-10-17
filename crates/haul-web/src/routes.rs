@@ -5,13 +5,13 @@ use axum::middleware;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use futures_util::future::join_all;
-use haul_core::{Error, Metadata, Resource, VersionChoice};
+use haul_core::{Error, Metadata, MyLibrary, Resource, Status, StatusFilter, VersionChoice};
 use maud::Markup;
 use serde::Deserialize;
 
 use crate::guard::guard;
 use crate::listing::ListParams;
-use crate::state::{AppState, Settings};
+use crate::state::{AppState, Mine, Settings};
 use crate::views::{self, ItemPage, LibraryPage, PAGE_SIZE};
 
 pub fn router(settings: Settings) -> Router {
@@ -22,6 +22,8 @@ pub fn router(settings: Settings) -> Router {
         .route("/login/status", get(login_status))
         .route("/logout", post(logout))
         .route("/servers", get(servers))
+        .route("/servers/mine", post(save_mine))
+        .route("/servers/mine/refresh", post(refresh_mine))
         .route("/servers/{id}", get(libraries))
         .route("/servers/{id}/status", get(server_status))
         .route("/servers/{id}/libraries/{key}", get(library))
@@ -148,10 +150,96 @@ async fn logout(State(state): State<AppState>) -> Result<Redirect, AppError> {
 
 // ---- browsing -------------------------------------------------------------
 
-async fn servers(State(state): State<AppState>) -> Page {
+#[derive(Deserialize)]
+struct ServersQuery {
+    #[serde(default)]
+    all: Option<String>,
+}
+
+async fn servers(State(state): State<AppState>, Query(query): Query<ServersQuery>) -> Page {
     let user = user(&state)?;
     let servers = state.servers().await?;
-    Ok(views::servers_page(&user, &servers))
+    let config = state.config()?;
+    let mine: Vec<String> = haul_core::my_servers(&servers, &config)
+        .into_iter()
+        .map(|s| s.client_identifier.clone())
+        .collect();
+    let library = state.mine().await;
+    Ok(views::servers_page(&views::ServersPage {
+        user: &user,
+        servers: &servers,
+        mine: &mine,
+        show_all: query.all.is_some_and(|a| !a.is_empty() && a != "0"),
+        library: &library,
+        refreshing: state.mine_refreshing(),
+    }))
+}
+
+/// Choose which servers count as your library (checkboxes named `server`).
+async fn save_mine(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> Result<Redirect, AppError> {
+    user(&state)?;
+    let servers = state.servers().await?;
+    let mut chosen: Vec<String> = url::form_urlencoded::parse(&body)
+        .filter(|(k, _)| k == "server")
+        .map(|(_, v)| v.into_owned())
+        .filter(|id| servers.iter().any(|s| &s.client_identifier == id))
+        .collect();
+    chosen.dedup();
+    // Exactly the servers you own is the default; keep following it.
+    let mut owned: Vec<&str> = servers
+        .iter()
+        .filter(|s| s.owned)
+        .map(|s| s.client_identifier.as_str())
+        .collect();
+    let mut sorted: Vec<&str> = chosen.iter().map(String::as_str).collect();
+    owned.sort_unstable();
+    sorted.sort_unstable();
+    if sorted == owned {
+        chosen.clear();
+    }
+    let mut config = state.config()?;
+    config.my_servers = chosen;
+    state.settings().store.save(&config)?;
+    state.refresh_mine();
+    Ok(Redirect::to("/servers#my-library"))
+}
+
+async fn refresh_mine(State(state): State<AppState>) -> Result<Redirect, AppError> {
+    user(&state)?;
+    state.refresh_mine();
+    Ok(Redirect::to("/servers#my-library"))
+}
+
+/// Each item's status, when there's a library to compare with.
+fn statuses(
+    mine: &Mine,
+    items: &[Metadata],
+    status: impl Fn(&MyLibrary, &Metadata) -> Option<Status>,
+) -> Option<Vec<Option<Status>>> {
+    let lib = mine.ready()?;
+    Some(items.iter().map(|m| status(lib, m)).collect())
+}
+
+/// Keep the items whose status passes `filter`, along with their statuses.
+fn keep_status(
+    items: Vec<Metadata>,
+    statuses: Option<Vec<Option<Status>>>,
+    filter: Option<StatusFilter>,
+) -> (Vec<Metadata>, Option<Vec<Option<Status>>>) {
+    match (statuses, filter) {
+        (Some(statuses), Some(filter)) => {
+            let (items, statuses): (Vec<_>, Vec<_>) = items
+                .into_iter()
+                .zip(statuses)
+                .filter(|(_, s)| filter.matches(*s))
+                .unzip();
+            (items, Some(statuses))
+        }
+        (statuses, _) => (items, statuses),
+    }
 }
 
 async fn server_status(State(state): State<AppState>, Path(id): Path<String>) -> Markup {
@@ -185,9 +273,30 @@ async fn library(
     let user = user(&state)?;
     let (server, client) = state.server(&id).await?;
     let page = query.page.unwrap_or(1).max(1);
-    let (items, total) = client
-        .library_page(&key, (page - 1) * PAGE_SIZE, PAGE_SIZE, &params.view())
-        .await?;
+    let mine = state.mine_for(&server).await;
+    let filter = params.status();
+    let (items, total, statuses) = match (&mine, filter) {
+        // Filtering by status means comparing the whole library, then paging here.
+        (Mine::Ready(lib), Some(filter)) => {
+            let mut items = client.library_items(&key, &params.view()).await?;
+            items.retain(|m| filter.matches(lib.status(m)));
+            let total = items.len();
+            let items: Vec<Metadata> = items
+                .into_iter()
+                .skip((page - 1) * PAGE_SIZE)
+                .take(PAGE_SIZE)
+                .collect();
+            let statuses = statuses(&mine, &items, |l, m| l.status(m));
+            (items, total, statuses)
+        }
+        _ => {
+            let (items, total) = client
+                .library_page(&key, (page - 1) * PAGE_SIZE, PAGE_SIZE, &params.view())
+                .await?;
+            let statuses = statuses(&mine, &items, |l, m| l.status(m));
+            (items, total, statuses)
+        }
+    };
     let title = client
         .libraries()
         .await?
@@ -204,6 +313,8 @@ async fn library(
         page,
         total,
         params: &params,
+        mine: &mine,
+        statuses: statuses.as_deref(),
     }))
 }
 
@@ -245,6 +356,10 @@ async fn item(
     };
     let child_count = children.len();
     params.view().apply(&mut children);
+    let mine = state.mine_for(&server).await;
+    let status = mine.ready().and_then(|lib| lib.status(&item));
+    let child_statuses = statuses(&mine, &children, |lib, c| lib.status_under(&item, c));
+    let (children, child_statuses) = keep_status(children, child_statuses, params.status());
     // Not every item can be downloaded (e.g. music); then there's no button.
     let layout = &state.settings().layout;
     let plan = client
@@ -264,6 +379,19 @@ async fn item(
             }
         }
     }
+    // A show or season you partly have can fetch just what's missing.
+    let missing_plan = match (mine.ready(), status) {
+        (Some(lib), Some(Status::Partial { .. })) => client
+            .plan_download_filtered(
+                &item,
+                layout,
+                &VersionChoice::First,
+                lib.missing_under(&item),
+            )
+            .await
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
 
     Ok(views::item_page(&ItemPage {
         user: &user,
@@ -275,6 +403,10 @@ async fn item(
         params: &params,
         plan: &plan,
         version_plans: &version_plans,
+        mine: &mine,
+        status,
+        child_statuses: child_statuses.as_deref(),
+        missing_plan: &missing_plan,
     }))
 }
 
@@ -285,6 +417,8 @@ struct SearchQuery {
     server: Option<String>,
     /// Restrict to one library of that server (section key).
     library: Option<String>,
+    /// When searching everywhere, include your own servers.
+    mine: Option<String>,
 }
 
 async fn search(
@@ -317,9 +451,28 @@ async fn search(
             .map(|l| l.title),
         _ => None,
     };
+    let include_mine = query.mine.is_some_and(|m| !m.is_empty() && m != "0");
     let scope = views::SearchScope {
         server: server_id.as_deref(),
         library: library.as_deref(),
+        include_mine,
+    };
+    let mine = match &scoped {
+        Some((resource, _)) => state.mine_for(resource).await,
+        None => state.mine().await,
+    };
+    // Searching everywhere leaves out your own servers unless asked.
+    let all_servers = state.servers().await?;
+    let (targets, hidden_mine): (Vec<Resource>, usize) = if include_mine {
+        (all_servers, 0)
+    } else {
+        let (yours, others): (Vec<_>, Vec<_>) =
+            all_servers.into_iter().partition(|s| state.is_mine(s));
+        if others.is_empty() {
+            (yours, 0)
+        } else {
+            (others, yours.len())
+        }
     };
     let page = |results| {
         views::search_page(&views::SearchPage {
@@ -330,6 +483,8 @@ async fn search(
             library_title: library_title.as_deref(),
             params: &params,
             results,
+            mine: &mine,
+            hidden_mine: if scoped.is_some() { 0 } else { hidden_mine },
         })
     };
     if q.is_empty() {
@@ -342,8 +497,7 @@ async fn search(
             vec![(resource.clone(), items)]
         }
         None => {
-            let servers = state.servers().await?;
-            join_all(servers.into_iter().map(|resource| {
+            join_all(targets.into_iter().map(|resource| {
                 let state = state.clone();
                 async move {
                     let items = match state.server(&resource.client_identifier).await {
@@ -364,7 +518,15 @@ async fn search(
         match outcome {
             Ok(mut items) => {
                 view.apply(&mut items);
-                found.push((resource, items));
+                // Your own server's results aren't compared with themselves.
+                let compare = if state.is_mine(&resource) {
+                    &Mine::Off
+                } else {
+                    &mine
+                };
+                let statuses = statuses(compare, &items, |lib, m| lib.status(m));
+                let (items, statuses) = keep_status(items, statuses, params.status());
+                found.push((resource, items, statuses));
             }
             // Searching one chosen server should say why it failed.
             Err(e) if scoped.is_some() => return Err(e.into()),
@@ -445,11 +607,27 @@ async fn download(
                 .into_response());
         }
     };
+    // `missing=1` downloads only what your library doesn't have.
+    let only_missing = url::form_urlencoded::parse(&body).any(|(k, v)| k == "missing" && v == "1");
     let (server, client) = state.server(&id).await?;
     let item = client.metadata(&key).await?;
-    let plan = client
-        .plan_download_version(&item, &state.settings().layout, &version)
-        .await?;
+    let layout = &state.settings().layout;
+    let plan = if only_missing {
+        let Some(lib) = state.mine_now().await? else {
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                views::error_page(None, "Bad request", "No server counts as your library."),
+            )
+                .into_response());
+        };
+        client
+            .plan_download_filtered(&item, layout, &version, lib.missing_under(&item))
+            .await?
+    } else {
+        client
+            .plan_download_version(&item, layout, &version)
+            .await?
+    };
     state.downloads().enqueue(&client, &server.name, plan);
     Ok(Redirect::to("/downloads").into_response())
 }

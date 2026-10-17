@@ -5,6 +5,7 @@ pub mod download;
 pub mod error;
 pub mod library;
 pub mod listing;
+pub mod mine;
 pub mod naming;
 pub mod plextv;
 pub mod server;
@@ -14,6 +15,7 @@ pub use download::{Layout, Outcome, PlannedFile, Progress, VersionChoice};
 pub use error::{Error, Result};
 pub use library::{Library, Media, Metadata, Part};
 pub use listing::{Filter, Sort, SortKey, View};
+pub use mine::{MyLibrary, MyLibraryCache, Status, StatusFilter, is_mine, my_servers};
 pub use plextv::{ClientInfo, PlexTvClient, Resource};
 pub use server::{ServerClient, find_server};
 

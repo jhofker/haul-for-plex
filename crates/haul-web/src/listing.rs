@@ -1,6 +1,6 @@
 //! The filter and sort controls above lists, as they arrive in a query string.
 
-use haul_core::{Filter, Sort, View};
+use haul_core::{Filter, Sort, StatusFilter, View};
 use serde::Deserialize;
 
 /// Raw form values; blank or invalid ones are ignored rather than rejected,
@@ -15,6 +15,9 @@ pub struct ListParams {
     pub kind: String,
     #[serde(default)]
     pub sort: String,
+    /// Compared with your library: `missing`, `upgrade` or `have`.
+    #[serde(default)]
+    pub status: String,
 }
 
 impl ListParams {
@@ -35,6 +38,10 @@ impl ListParams {
         self.sort.parse().ok()
     }
 
+    pub fn status(&self) -> Option<StatusFilter> {
+        self.status.parse().ok()
+    }
+
     /// The sort as the form's `<select>` names it; empty for the list's own order.
     pub fn sort_value(&self) -> String {
         self.sort().map(|s| s.to_string()).unwrap_or_default()
@@ -42,7 +49,7 @@ impl ListParams {
 
     /// True when the list is shown as-is.
     pub fn is_default(&self) -> bool {
-        self.view() == View::default()
+        self.view() == View::default() && self.status().is_none()
     }
 
     /// Query-string pairs that reproduce these settings, for links such as
@@ -61,6 +68,9 @@ impl ListParams {
         }
         if let Some(sort) = view.sort {
             pairs.push(("sort", sort.to_string()));
+        }
+        if let Some(status) = self.status() {
+            pairs.push(("status", status.to_string()));
         }
         pairs
     }
@@ -89,6 +99,7 @@ mod tests {
             year: "soon".into(),
             kind: String::new(),
             sort: "size".into(),
+            status: "better".into(),
         };
         assert!(p.is_default());
         assert!(p.pairs().is_empty());
@@ -101,11 +112,12 @@ mod tests {
             year: "1977".into(),
             kind: "Movie".into(),
             sort: "YEAR:desc".into(),
+            status: "Missing".into(),
         };
         assert_eq!(p.sort_value(), "year:desc");
         assert_eq!(
             href("/x", &p.pairs()),
-            "/x?title=star+wars&year=1977&type=movie&sort=year%3Adesc"
+            "/x?title=star+wars&year=1977&type=movie&sort=year%3Adesc&status=missing"
         );
         assert_eq!(href("/x", &[]), "/x");
     }
