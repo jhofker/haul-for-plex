@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
         password: None,
         parallel: 2,
         plextv_url: Some(demo.plextv_url.clone()),
+        retry: Settings::DEFAULT_RETRY,
     };
 
     println!(

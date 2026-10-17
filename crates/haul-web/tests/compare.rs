@@ -199,6 +199,7 @@ async fn env() -> Env {
         password: None,
         parallel: 2,
         plextv_url: Some(format!("{}/", plextv.uri())),
+        retry: Settings::DEFAULT_RETRY,
     });
     Env {
         app,
