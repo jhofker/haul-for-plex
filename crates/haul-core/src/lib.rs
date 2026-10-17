@@ -7,6 +7,7 @@ pub mod library;
 pub mod listing;
 pub mod naming;
 pub mod plextv;
+pub mod retry;
 pub mod server;
 
 pub use config::{Auth, Config, ConfigStore};
@@ -15,6 +16,7 @@ pub use error::{Error, Result};
 pub use library::{Library, Media, Metadata, Part};
 pub use listing::{Filter, Sort, SortKey, View};
 pub use plextv::{ClientInfo, PlexTvClient, Resource};
+pub use retry::{RetryPolicy, download_with_retry};
 pub use server::{ServerClient, find_server};
 
 /// Product name sent to Plex in `X-Plex-Product`.

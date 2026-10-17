@@ -37,11 +37,17 @@ impl Context {
 
     /// Find a server by name or id and connect to it.
     pub async fn server(&mut self, query: &str) -> Result<ServerClient> {
+        Ok(self.server_with_resource(query).await?.1)
+    }
+
+    /// Like [`server`](Self::server), also returning the server's record so
+    /// it can be reconnected to later.
+    pub async fn server_with_resource(&mut self, query: &str) -> Result<(Resource, ServerClient)> {
         let servers = self.plextv()?.servers().await?;
-        let server = haul_core::find_server(&servers, query)?;
-        let client = self.connect(server).await?;
-        self.remember([(server, &client)])?;
-        Ok(client)
+        let server = haul_core::find_server(&servers, query)?.clone();
+        let client = self.connect(&server).await?;
+        self.remember([(&server, &client)])?;
+        Ok((server, client))
     }
 
     /// Remember the connections that worked so the next run skips probing.

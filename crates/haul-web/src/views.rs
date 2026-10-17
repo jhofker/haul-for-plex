@@ -929,13 +929,88 @@ fn job_row(job: &Job) -> Markup {
                         @if *resumed_from > 0 { span.muted { " (resumed)" } }
                     }
                     JobState::Skipped => { span.muted { "Already downloaded" } }
+                    JobState::Waiting { reason, retry_at } => {
+                        @let secs = retry_at.saturating_duration_since(std::time::Instant::now()).as_secs();
+                        span.warn { "Waiting for server" }
+                        span.muted {
+                            @if secs > 0 { " · retrying in " (format_wait(secs)) } @else { " · retrying now" }
+                        }
+                        div.muted.small { (reason) }
+                    }
+                    JobState::Paused => { span.muted { "Paused" } }
                     JobState::Failed(message) => { span.bad { (message) } }
                 }
             }
-            td {
+            td.actions {
+                @if job.state.can_pause() {
+                    form.inline method="post" action={"/downloads/" (job.id) "/pause"} {
+                        button.link type="submit" { "Pause" }
+                    }
+                }
+                @if job.state.can_resume() {
+                    form.inline method="post" action={"/downloads/" (job.id) "/resume"} {
+                        button.link type="submit" {
+                            @if matches!(job.state, JobState::Failed(_)) { "Retry" } @else { "Resume" }
+                        }
+                    }
+                }
                 @if job.state.is_active() {
                     form.inline method="post" action={"/downloads/" (job.id) "/cancel"} {
                         button.link type="submit" { "Cancel" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `90` → `1m 30s`.
+fn format_wait(secs: u64) -> String {
+    match (secs / 60, secs % 60) {
+        (0, s) => format!("{s}s"),
+        (m, 0) => format!("{m}m"),
+        (m, s) => format!("{m}m {s}s"),
+    }
+}
+
+/// Pause all / resume all, for the whole queue and, when it holds jobs from
+/// several servers, for each server.
+fn queue_actions(jobs: &[Job]) -> Markup {
+    let mut servers: Vec<(&str, &str)> = Vec::new();
+    for job in jobs.iter().filter(|j| j.state.is_active()) {
+        if !servers.iter().any(|(id, _)| *id == job.server_id) {
+            servers.push((&job.server_id, &job.server));
+        }
+    }
+    let buttons = |server: Option<&str>| {
+        let of = |j: &&Job| server.is_none_or(|s| j.server_id == s);
+        let pausable = jobs.iter().filter(of).any(|j| j.state.can_pause());
+        let paused = jobs
+            .iter()
+            .filter(of)
+            .any(|j| matches!(j.state, JobState::Paused));
+        html! {
+            @if pausable {
+                form.inline method="post" action="/downloads/pause" {
+                    @if let Some(s) = server { input type="hidden" name="server" value=(s); }
+                    button type="submit" { "Pause all" }
+                }
+            }
+            @if paused {
+                form.inline method="post" action="/downloads/resume" {
+                    @if let Some(s) = server { input type="hidden" name="server" value=(s); }
+                    button type="submit" { "Resume all" }
+                }
+            }
+        }
+    };
+    html! {
+        @if !servers.is_empty() {
+            div.queue-actions {
+                div.row { (buttons(None)) }
+                @if servers.len() > 1 {
+                    @for (id, name) in &servers {
+                        div.row { span.muted { (name) } (buttons(Some(id))) }
                     }
                 }
             }
@@ -950,6 +1025,7 @@ pub fn downloads_list(jobs: &[Job]) -> Markup {
             @if jobs.is_empty() {
                 p.empty { "No downloads yet. Open an item and press Download." }
             } @else {
+                (queue_actions(jobs))
                 table {
                     thead { tr { th { "File" } th { "Server" } th { "Status" } th {} } }
                     tbody { @for job in jobs.iter().rev() { (job_row(job)) } }
