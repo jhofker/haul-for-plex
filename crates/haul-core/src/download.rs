@@ -170,6 +170,23 @@ impl ServerClient {
         layout: &Layout,
         version: &VersionChoice,
     ) -> Result<Vec<PlannedFile>> {
+        self.plan_download_filtered(item, layout, version, |_| true)
+            .await
+    }
+
+    /// Like [`plan_download_version`](Self::plan_download_version), keeping
+    /// only the movies and episodes `keep` accepts. A season or show where
+    /// `keep` rejects every episode gives an empty plan rather than an error.
+    pub async fn plan_download_filtered(
+        &self,
+        item: &Metadata,
+        layout: &Layout,
+        version: &VersionChoice,
+        keep: impl Fn(&Metadata) -> bool,
+    ) -> Result<Vec<PlannedFile>> {
+        if item.is_playable() && !keep(item) {
+            return Ok(Vec::new());
+        }
         match item.kind.as_str() {
             "movie" => plan_files(item, &layout.movies_dir, None, version, true),
             "episode" => {
@@ -188,7 +205,12 @@ impl ServerClient {
                     )
                 };
                 let mut files = Vec::new();
+                let mut skipped = false;
                 for episode in episodes.iter().filter(|e| e.kind == "episode") {
+                    if !keep(episode) {
+                        skipped = true;
+                        continue;
+                    }
                     // An episode without files can't be downloaded; skip it
                     // rather than failing the whole season.
                     if episode.media.iter().any(|m| !m.parts.is_empty()) {
@@ -201,7 +223,7 @@ impl ServerClient {
                         )?);
                     }
                 }
-                if files.is_empty() {
+                if files.is_empty() && !skipped {
                     return Err(Error::NoMedia(item.title.clone()));
                 }
                 Ok(files)

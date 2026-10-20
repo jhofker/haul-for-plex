@@ -99,6 +99,16 @@ async fn all(
         .iter()
         .filter_map(|k| s.server.items.get(k))
         .collect();
+    // `type=4` lists every episode in a TV library instead of its shows.
+    if q.get("type").map(String::as_str) == Some("4") {
+        items = items
+            .iter()
+            .flat_map(|show| &show.children)
+            .filter_map(|season| s.server.items.get(season))
+            .flat_map(|season| &season.children)
+            .filter_map(|ep| s.server.items.get(ep))
+            .collect();
+    }
     if let Some(title) = q.get("title") {
         let t = title.to_lowercase();
         items.retain(|i| i.title.to_lowercase().contains(&t));

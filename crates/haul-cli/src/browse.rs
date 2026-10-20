@@ -1,5 +1,5 @@
 use anyhow::Result;
-use haul_core::{Library, Metadata, View};
+use haul_core::{Library, Metadata, MyLibrary, Status, StatusFilter, View};
 
 use crate::context::Context;
 use crate::table;
@@ -23,6 +23,21 @@ pub async fn libraries(mut ctx: Context, server: &str, json: bool) -> Result<()>
     Ok(())
 }
 
+/// Whether and how to compare a listing with your own library.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Compare {
+    /// Show each item's status.
+    pub enabled: bool,
+    /// Only list items with this status (implies `enabled`).
+    pub status: Option<StatusFilter>,
+}
+
+impl Compare {
+    pub fn wanted(self) -> bool {
+        self.enabled || self.status.is_some()
+    }
+}
+
 /// List a library (by name or key) or the contents/details of an item (by key).
 /// `view` filters and sorts the listing; it doesn't apply to a single item's details.
 pub async fn ls(
@@ -30,43 +45,108 @@ pub async fn ls(
     server: &str,
     target: &str,
     view: &View,
+    compare: Compare,
     json: bool,
 ) -> Result<()> {
     let client = ctx.server(server).await?;
+    let mine = if compare.wanted() {
+        Some(ctx.my_library(false).await?)
+    } else {
+        None
+    };
 
     let libs = client.libraries().await?;
     if let Some(lib) = find_library(&libs, target) {
         let items = client.library_items(&lib.key, view).await?;
+        let (items, statuses) = marked(items, mine.as_ref(), compare.status, |m, i| m.status(i));
         if json {
-            crate::output::json(&items.iter().map(item_json).collect::<Vec<_>>());
+            crate::output::json(&items_json(&items, statuses.as_deref()));
             return Ok(());
         }
-        print_items(&items);
+        print_items(&items, statuses.as_deref());
         hint(server, &items);
         return Ok(());
     }
 
     let item = client.metadata(target).await?;
+    let status = mine.as_ref().and_then(|m| m.status(&item));
     if item.is_playable() {
         if json {
-            crate::output::json(&item_json(&item));
+            let mut value = item_json(&item);
+            add_status(&mut value, status);
+            crate::output::json(&value);
         } else {
             print_details(&item);
+            if let Some(status) = status {
+                println!("\nyour library: {status}");
+            }
         }
     } else {
         let mut children = client.children(&item.rating_key).await?;
         view.apply(&mut children);
+        let (children, statuses) = marked(children, mine.as_ref(), compare.status, |m, c| {
+            m.status_under(&item, c)
+        });
         if json {
             let mut value = item_json(&item);
-            value["children"] = children.iter().map(item_json).collect();
+            add_status(&mut value, status);
+            value["children"] = items_json(&children, statuses.as_deref()).into();
             crate::output::json(&value);
             return Ok(());
         }
-        println!("{}\n", describe(&item));
-        print_items(&children);
+        println!("{}", describe(&item));
+        if let Some(status) = status {
+            println!("your library: {status}");
+        }
+        println!();
+        print_items(&children, statuses.as_deref());
         hint(server, &children);
     }
     Ok(())
+}
+
+/// Each item's status in `mine` (when comparing), keeping only those that
+/// pass `filter`.
+pub fn marked(
+    items: Vec<Metadata>,
+    mine: Option<&MyLibrary>,
+    filter: Option<StatusFilter>,
+    status: impl Fn(&MyLibrary, &Metadata) -> Option<Status>,
+) -> (Vec<Metadata>, Option<Vec<Option<Status>>>) {
+    let Some(mine) = mine else {
+        return (items, None);
+    };
+    let (items, statuses) = items
+        .into_iter()
+        .map(|m| {
+            let s = status(mine, &m);
+            (m, s)
+        })
+        .filter(|(_, s)| filter.is_none_or(|f| f.matches(*s)))
+        .unzip();
+    (items, Some(statuses))
+}
+
+pub fn add_status(value: &mut serde_json::Value, status: Option<Status>) {
+    if let Some(status) = status {
+        value["status"] = status.name().into();
+        value["status_label"] = status.label().into();
+        if let Status::Partial { missing } = status {
+            value["missing_episodes"] = missing.into();
+        }
+    }
+}
+
+fn items_json(items: &[Metadata], statuses: Option<&[Option<Status>]>) -> Vec<serde_json::Value> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let mut value = item_json(m);
+            add_status(&mut value, statuses.and_then(|s| s[i]));
+            value
+        })
+        .collect()
 }
 
 /// An item as JSON, including its files when they are known.
@@ -112,16 +192,40 @@ fn find_library<'a>(libs: &'a [Library], target: &str) -> Option<&'a Library> {
         })
 }
 
-fn print_items(items: &[Metadata]) {
+fn print_items(items: &[Metadata], statuses: Option<&[Option<Status>]>) {
     if items.is_empty() {
         println!("(empty)");
         return;
     }
-    let rows: Vec<[String; 3]> = items
-        .iter()
-        .map(|m| [m.rating_key.clone(), m.kind.clone(), describe(m)])
-        .collect();
-    table::print(["KEY", "TYPE", "TITLE"], &rows);
+    match statuses {
+        None => {
+            let rows: Vec<[String; 3]> = items
+                .iter()
+                .map(|m| [m.rating_key.clone(), m.kind.clone(), describe(m)])
+                .collect();
+            table::print(["KEY", "TYPE", "TITLE"], &rows);
+        }
+        Some(statuses) => {
+            let rows: Vec<[String; 4]> = items
+                .iter()
+                .zip(statuses)
+                .map(|(m, s)| {
+                    [
+                        m.rating_key.clone(),
+                        m.kind.clone(),
+                        status_cell(*s),
+                        describe(m),
+                    ]
+                })
+                .collect();
+            table::print(["KEY", "TYPE", "YOUR LIBRARY", "TITLE"], &rows);
+        }
+    }
+}
+
+/// A status for a table cell; blank for things that can't be compared.
+pub fn status_cell(status: Option<Status>) -> String {
+    status.map(Status::label).unwrap_or_default()
 }
 
 fn hint(server: &str, items: &[Metadata]) {

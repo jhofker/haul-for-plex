@@ -7,6 +7,8 @@ line or through a simple web interface.
 - Sign in with your Plex account (no password handling; you approve it on plex.tv)
 - List and search every server you have access to, owned or shared
 - Download movies, episodes, whole seasons or whole shows
+- See what you already have: other servers are compared with your own, so
+  you can spot missing films and episodes, and better copies of ones you have
 - Interrupted downloads resume where they left off
 - Files are renamed into a layout Plex, Jellyfin and friends understand
 - One static binary, or a ~40 MB Docker image
@@ -55,6 +57,36 @@ $ haul download "Home" 84521 --version 4k   # pick a version
 
 Add `--json` to any command for machine-readable output. Keys come from `ls`
 and `search`.
+
+## Compare with your own library
+
+Haul can tell you which titles on a friend's server you already have. The
+servers you own count as your library (choose others with `haul my-library`);
+items elsewhere are marked **Have it**, **Upgrade** (theirs has a higher
+resolution), **Missing**, or, for shows and seasons you have part of, how many
+episodes are missing.
+
+```console
+$ haul ls "Friend" movies --compare        # adds a YOUR LIBRARY column
+$ haul ls "Friend" "tv shows" --status missing
+$ haul search "harbor" --compare           # leaves out your own servers
+$ haul download "Friend" 100583 --only-missing   # just the episodes you lack
+$ haul my-library                          # which servers count, and what's on them
+$ haul my-library "Home" "Archive"         # count these instead
+$ haul my-library --owned                  # back to every server you own
+```
+
+Titles are matched by their IMDb, TMDB and TVDB ids (and Plex's own ids),
+falling back to title and year. Your library is read once and saved for ten
+minutes, so repeated commands stay quick; `haul my-library --refresh` reads it
+again.
+
+In the web interface the same badges appear in library, show and search lists,
+with a filter for them, and a show or season you have part of gets a
+**Download missing episodes** button. Your own servers are hidden from the
+Servers page and from searches across all servers, since downloading from
+yourself is rarely wanted; links on those pages bring them back. Choose which
+servers count as your library at the bottom of the Servers page.
 
 Run `haul download --help` for all options. Existing files of the right
 size are skipped; a file of a different size is only replaced with `--force`.

@@ -116,3 +116,60 @@ async fn covers_ranges_and_forbidden_downloads() {
         .unwrap_err();
     assert!(matches!(err, haul_core::Error::DownloadForbidden(_)));
 }
+
+#[tokio::test]
+async fn compares_the_shared_server_with_yours() {
+    use haul_core::{MyLibrary, Status};
+
+    let (demo, clients) = connect().await;
+    let tv = PlexTvClient::with_base_url(ClientInfo::new("demo-test"), &demo.plextv_url)
+        .unwrap()
+        .with_token(haul_demo::TOKEN);
+    let resources = tv.servers().await.unwrap();
+    let mine = MyLibrary::load(&[(&resources[0], &clients[0])]).await;
+    assert!(mine.skipped.is_empty());
+    let (movies, shows) = mine.counts();
+    assert!(movies > 10 && shows >= 5);
+
+    let lighthouse = &clients[1];
+    let status = |title: &str| {
+        let key = demo.servers[1].find(title).unwrap().to_string();
+        let mine = &mine;
+        async move { mine.status(&lighthouse.metadata(&key).await.unwrap()) }
+    };
+    assert_eq!(status("Paper Cranes").await, Some(Status::Have));
+    assert_eq!(status("Copper Moon").await, Some(Status::Missing));
+    assert_eq!(
+        status("Northbound").await,
+        Some(Status::Upgrade {
+            mine: 1080,
+            theirs: 2160
+        })
+    );
+    assert_eq!(
+        status("The Quiet Wing").await,
+        Some(Status::Partial { missing: 6 })
+    );
+
+    // Downloading what's missing from the show gets just season 4.
+    let key = demo.servers[1].find("The Quiet Wing").unwrap();
+    let show = lighthouse.metadata(key).await.unwrap();
+    let layout = haul_core::Layout {
+        movies_dir: "/m".into(),
+        tv_dir: "/t".into(),
+    };
+    let plan = lighthouse
+        .plan_download_filtered(
+            &show,
+            &layout,
+            &VersionChoice::First,
+            mine.missing_under(&show),
+        )
+        .await
+        .unwrap();
+    assert_eq!(plan.len(), 6);
+    assert!(
+        plan.iter()
+            .all(|f| f.dest.to_string_lossy().contains("Season 04"))
+    );
+}

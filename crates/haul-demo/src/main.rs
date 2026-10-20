@@ -65,6 +65,10 @@ async fn main() -> Result<()> {
             .join(", ")
     );
     println!(
+        "Fake plex.tv: {} (set HAUL_PLEX_TV_URL to this, and sign in, to try the CLI)",
+        demo.plextv_url
+    );
+    println!(
         "Downloads go to {}/downloads (removed on exit)",
         dir.path().display()
     );

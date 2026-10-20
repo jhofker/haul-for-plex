@@ -1,19 +1,19 @@
 :root {
   color-scheme: light;
   --bg: #fafafa; --fg: #1c1c1e; --muted: #6b6b70; --card: #fff; --line: #e3e3e8;
-  --accent: #c27a00; --accent-fg: #fff; --ok: #1a7f37; --bad: #c62828;
+  --accent: #c27a00; --accent-fg: #fff; --ok: #1a7f37; --bad: #c62828; --info: #1f6feb;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme=light]) {
     color-scheme: dark;
     --bg: #141417; --fg: #ececf0; --muted: #9a9aa3; --card: #1c1c21; --line: #2e2e36;
-    --accent: #e5a00d; --accent-fg: #1a1200; --ok: #4cc26b; --bad: #ff7b72;
+    --accent: #e5a00d; --accent-fg: #1a1200; --ok: #4cc26b; --bad: #ff7b72; --info: #58a6ff;
   }
 }
 :root[data-theme=dark] {
   color-scheme: dark;
   --bg: #141417; --fg: #ececf0; --muted: #9a9aa3; --card: #1c1c21; --line: #2e2e36;
-  --accent: #e5a00d; --accent-fg: #1a1200; --ok: #4cc26b; --bad: #ff7b72;
+  --accent: #e5a00d; --accent-fg: #1a1200; --ok: #4cc26b; --bad: #ff7b72; --info: #58a6ff;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
@@ -76,3 +76,8 @@ form .row { margin-bottom: .75rem; }
 .listctl { margin-bottom: .75rem; }
 .listctl input[type=search] { min-width: min(16rem, 100%); }
 .listctl input.year { min-width: 0; width: 6.5rem; }
+.badge.st-have { color: var(--ok); border-color: currentColor; }
+.badge.st-upgrade { color: var(--info); border-color: currentColor; }
+.badge.st-partial, .badge.st-missing { color: var(--accent); border-color: currentColor; }
+.note { margin: 0 0 .75rem; }
+#my-library label { cursor: pointer; }

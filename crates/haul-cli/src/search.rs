@@ -1,22 +1,30 @@
 use anyhow::Result;
 use futures_util::future::join_all;
 
-use crate::browse::describe;
+use crate::browse::{Compare, add_status, describe, marked, status_cell};
 use crate::context::Context;
 use crate::table;
 
-/// Search one server, or every reachable server at once.
+/// Search one server, or every reachable server at once. When comparing
+/// with your library, searching everywhere leaves out your own servers.
 pub async fn search(
     mut ctx: Context,
     query: &str,
     server: Option<&str>,
     limit: usize,
+    compare: Compare,
     json: bool,
 ) -> Result<()> {
-    let servers = ctx.plextv()?.servers().await?;
+    let servers = ctx.servers().await?;
     let targets = match server {
         Some(q) => vec![haul_core::find_server(&servers, q)?],
+        None if compare.wanted() => servers.iter().filter(|s| !ctx.is_mine(s)).collect(),
         None => servers.iter().collect(),
+    };
+    let mine = if compare.wanted() {
+        Some(ctx.my_library(false).await?)
+    } else {
+        None
     };
 
     let connections = join_all(targets.iter().map(|s| ctx.connect(s))).await;
@@ -36,15 +44,18 @@ pub async fn search(
     let mut rows = Vec::new();
     for ((server, _), result) in clients.iter().zip(results) {
         match result {
-            Ok(items) => rows.extend(items.iter().map(|m| {
-                [
-                    server.name.clone(),
-                    m.rating_key.clone(),
-                    m.kind.clone(),
-                    describe(m),
-                    m.library_section_title.clone().unwrap_or_default(),
-                ]
-            })),
+            Ok(items) => {
+                let (items, statuses) =
+                    marked(items, mine.as_ref(), compare.status, |m, i| m.status(i));
+                rows.extend(items.iter().enumerate().map(|(i, m)| Row {
+                    server: server.name.clone(),
+                    key: m.rating_key.clone(),
+                    kind: m.kind.clone(),
+                    title: describe(m),
+                    library: m.library_section_title.clone().unwrap_or_default(),
+                    status: statuses.as_ref().and_then(|s| s[i]),
+                }));
+            }
             Err(e) => eprintln!("warning: search failed on {}: {e}", server.name),
         }
     }
@@ -52,11 +63,13 @@ pub async fn search(
     if json {
         let entries: Vec<_> = rows
             .iter()
-            .map(|[server, key, kind, title, library]| {
-                serde_json::json!({
-                    "server": server, "key": key, "type": kind,
-                    "title": title, "library": library,
-                })
+            .map(|r| {
+                let mut value = serde_json::json!({
+                    "server": r.server, "key": r.key, "type": r.kind,
+                    "title": r.title, "library": r.library,
+                });
+                add_status(&mut value, r.status);
+                value
             })
             .collect();
         crate::output::json(&entries);
@@ -67,7 +80,40 @@ pub async fn search(
         println!("No results for {query:?}.");
         return Ok(());
     }
-    table::print(["SERVER", "KEY", "TYPE", "TITLE", "LIBRARY"], &rows);
+    if mine.is_some() {
+        let cells: Vec<[String; 6]> = rows
+            .into_iter()
+            .map(|r| {
+                [
+                    r.server,
+                    r.key,
+                    r.kind,
+                    status_cell(r.status),
+                    r.title,
+                    r.library,
+                ]
+            })
+            .collect();
+        table::print(
+            ["SERVER", "KEY", "TYPE", "YOUR LIBRARY", "TITLE", "LIBRARY"],
+            &cells,
+        );
+    } else {
+        let cells: Vec<[String; 5]> = rows
+            .into_iter()
+            .map(|r| [r.server, r.key, r.kind, r.title, r.library])
+            .collect();
+        table::print(["SERVER", "KEY", "TYPE", "TITLE", "LIBRARY"], &cells);
+    }
     println!("\nRun `haul ls <SERVER> <KEY>` for details.");
     Ok(())
+}
+
+struct Row {
+    server: String,
+    key: String,
+    kind: String,
+    title: String,
+    library: String,
+    status: Option<haul_core::Status>,
 }

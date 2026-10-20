@@ -25,6 +25,10 @@ pub struct Config {
     /// Last working connection URI per server, keyed by machine identifier.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, String>,
+    /// Machine ids of the servers that count as your own library. Empty
+    /// means every server you own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub my_servers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +43,7 @@ impl Config {
             client_id: uuid::Uuid::new_v4().to_string(),
             auth: None,
             connections: BTreeMap::new(),
+            my_servers: Vec::new(),
         }
     }
 
