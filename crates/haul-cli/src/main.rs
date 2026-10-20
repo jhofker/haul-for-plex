@@ -131,6 +131,10 @@ enum Command {
         /// have, e.g. the missing episodes of a show.
         #[arg(long)]
         only_missing: bool,
+        /// How many times to retry a file when the server drops or answers
+        /// with a temporary error, waiting longer each time. 0 disables.
+        #[arg(long, default_value_t = 5, value_name = "N")]
+        retries: u32,
     },
     /// Show or choose which servers count as your own library, for
     /// `--compare` and `--only-missing`. By default, every server you own.
@@ -255,6 +259,7 @@ async fn run(cli: Cli) -> Result<()> {
             dry_run,
             force,
             only_missing,
+            retries,
         } => {
             let options = download::Options {
                 server,
@@ -267,6 +272,7 @@ async fn run(cli: Cli) -> Result<()> {
                 force,
                 only_missing,
                 json: cli.json,
+                retries,
             };
             download::run(context::Context::load(store)?, options).await?
         }
@@ -298,6 +304,7 @@ async fn run(cli: Cli) -> Result<()> {
                 parallel: usize::from(parallel),
                 // Undocumented: lets the web UI be tested against a fake plex.tv.
                 plextv_url: std::env::var("HAUL_PLEX_TV_URL").ok(),
+                retry: haul_web::Settings::DEFAULT_RETRY,
             };
             haul_web::serve(bind, settings).await?
         }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_util::StreamExt;
 use futures_util::stream;
-use haul_core::{Error, Layout, Outcome, PlannedFile};
+use haul_core::{Error, Layout, Outcome, PlannedFile, RetryPolicy};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::context::Context;
@@ -23,6 +23,8 @@ pub struct Options {
     /// Only movies and episodes missing from your own library.
     pub only_missing: bool,
     pub json: bool,
+    /// Retries per file when the server drops or answers with a temporary error.
+    pub retries: u32,
 }
 
 /// Movie and TV folders, defaulting to `./downloads/Movies` and `./downloads/TV Shows`.
@@ -43,7 +45,11 @@ struct Tally {
 }
 
 pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
-    let client = ctx.server(&opts.server).await?;
+    let (resource, client) = ctx.server_with_resource(&opts.server).await?;
+    let policy = RetryPolicy {
+        retries: opts.retries,
+        ..RetryPolicy::default()
+    };
     let item = client.metadata(&opts.key).await?;
 
     let layout = layout(opts.movies_dir, opts.tv_dir);
@@ -115,6 +121,7 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
     let results: Vec<_> = stream::iter(&files)
         .map(|file| {
             let (client, multi, style, refused) = (&client, &multi, &style, &refused);
+            let (ctx, resource, policy) = (&ctx, &resource, &policy);
             async move {
                 if refused.load(Ordering::Relaxed) {
                     return (file, None);
@@ -123,14 +130,35 @@ pub async fn run(mut ctx: Context, opts: Options) -> Result<()> {
                     .add(ProgressBar::new(file.part.size.unwrap_or(0)).with_style(style.clone()));
                 bar.set_message(file_name(file));
                 bar.enable_steady_tick(Duration::from_millis(250));
-                let result = client
-                    .download_part(&file.part, &file.dest, opts.force, |p| {
+                let name = file_name(file);
+                let result = haul_core::download_with_retry(
+                    // Retries connect afresh: the best connection may have changed.
+                    |attempt| async move {
+                        if attempt == 0 {
+                            Ok(client.clone())
+                        } else {
+                            ctx.connect(resource).await
+                        }
+                    },
+                    &file.part,
+                    &file.dest,
+                    opts.force,
+                    policy,
+                    |p| {
                         if let Some(total) = p.total {
                             bar.set_length(total);
                         }
                         bar.set_position(p.downloaded);
-                    })
-                    .await;
+                    },
+                    |e, wait, n| {
+                        let _ = multi.println(format!(
+                            "{name}: {e}; retrying in {}s ({n} of {})",
+                            wait.as_secs(),
+                            policy.retries
+                        ));
+                    },
+                )
+                .await;
                 bar.finish_and_clear();
                 multi.remove(&bar);
                 if matches!(result, Err(Error::DownloadForbidden(_))) {

@@ -9,7 +9,9 @@ line or through a simple web interface.
 - Download movies, episodes, whole seasons or whole shows
 - See what you already have: other servers are compared with your own, so
   you can spot missing films and episodes, and better copies of ones you have
-- Interrupted downloads resume where they left off
+- Interrupted downloads resume where they left off, and retry by themselves
+  when a server drops
+- The web download queue can be paused and resumed, and survives restarts
 - Files are renamed into a layout Plex, Jellyfin and friends understand
 - One static binary, or a ~40 MB Docker image
 
@@ -113,9 +115,18 @@ $ haul serve --bind 0.0.0.0:8080 --password 'something long'
 Sign in with Plex in the browser, then browse servers and libraries, search,
 and press **Download**. Library, episode and search lists can be filtered by
 title, year or type and sorted by title, year, date added, release date or
-rating. The Downloads page shows live progress and lets you
-cancel. It is designed for a single user; the queue lives in memory, so
-re-queue anything unfinished after a restart (partial files resume).
+rating. The Downloads page shows live progress and lets you pause, resume or
+cancel each file, or pause and resume everything (or everything from one
+server). Pausing frees the download slot for the next file and keeps the
+partial file.
+
+The queue is saved to `queue.json` next to the config file, so a restart or
+`docker stop` picks up where it left off: unfinished files resume from their
+partial files and paused ones stay paused. If a server drops or answers with a
+temporary error, its files show as waiting for that server and are retried on
+their own (after 5 seconds, then less often, up to every 5 minutes) while other
+servers' files keep going. Lost access, a removed item or a full disk fail
+straight away; press Retry once it's fixed. It is designed for a single user.
 
 If you listen beyond localhost, set a password. It is asked for with HTTP basic
 auth (any username). Do not expose the port to the internet without a reverse
@@ -131,7 +142,7 @@ services:
     environment:
       HAUL_WEB_PASSWORD: change-me
     volumes:
-      - ./config:/config        # sign-in and settings
+      - ./config:/config        # sign-in, settings and the download queue
       - /path/to/movies:/movies # your movies folder
       - /path/to/tv:/tv         # your TV folder
     # user: "1000:1000"         # write files as this user instead of root
@@ -144,7 +155,7 @@ Open <http://localhost:8080> and sign in. To use the CLI in the image:
 
 | Environment variable | Meaning | Default (Docker) |
 |---|---|---|
-| `HAUL_CONFIG_DIR` | where `config.json` (token, client id) lives | OS config dir (`/config`) |
+| `HAUL_CONFIG_DIR` | where `config.json` (token, client id) and the web download queue live | OS config dir (`/config`) |
 | `HAUL_MOVIES_DIR` | movies folder | `./downloads/Movies` (`/movies`) |
 | `HAUL_TV_DIR` | TV folder | `./downloads/TV Shows` (`/tv`) |
 | `HAUL_BIND` | web interface address | `127.0.0.1:8080` (`0.0.0.0:8080`) |
@@ -157,6 +168,10 @@ The config file holds your Plex token and is only readable by its owner.
 - A server owner can disable downloads for people they share with. Those
   servers refuse the download and Haul reports it; it does not try to
   work around the setting.
+- `haul download` retries a file up to 5 times when the server drops, times
+  out or answers with a temporary (5xx) error, waiting longer each time and
+  reconnecting, since the best connection may have changed. Change that with
+  `--retries N`; `--retries 0` turns it off.
 - When an item has several versions (for example 1080p and 4K), the first is
   used unless you choose: `--version 2` (numbered as in `ls`) or
   `--version 4k` / `1080p` / `720p` / `sd`. For a season or show, episodes that

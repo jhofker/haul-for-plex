@@ -81,12 +81,36 @@ pub enum Error {
 }
 
 impl Error {
+    /// Whether trying again later might succeed: the server dropped, timed
+    /// out or answered with a temporary error. Lost access (401/403), a
+    /// removed item (404) and local problems such as a full disk are not.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Error::Http(e) => match e.status() {
+                Some(status) => retryable_status(status),
+                None => !e.is_builder() && !e.is_redirect(),
+            },
+            Error::Status { status, .. } => retryable_status(*status),
+            Error::Unreachable { .. } => true,
+            // The transfer stopped early; the rest can be fetched with `Range`.
+            Error::SizeMismatch { expected, actual } => actual < expected,
+            _ => false,
+        }
+    }
+
     pub(crate) fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         Error::Io {
             path: path.into(),
             source,
         }
     }
+}
+
+fn retryable_status(status: reqwest::StatusCode) -> bool {
+    use reqwest::StatusCode;
+    status.is_server_error()
+        || status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
 }
 
 fn format_attempts(attempts: &[(String, String)]) -> String {

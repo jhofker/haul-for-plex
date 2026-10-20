@@ -16,6 +16,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// a dead connection from hanging a download (the partial file stays resumable).
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long opening a connection may take, so a vanished server fails (and
+/// can be retried) quickly instead of waiting on the operating system.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// A connection that answered a probe.
 #[derive(Debug, Clone)]
 pub struct Reachable {
@@ -51,6 +55,7 @@ impl ServerClient {
         let http = reqwest::Client::builder()
             .default_headers(info.headers())
             .read_timeout(READ_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()?;
 
         if let Some(conn) =

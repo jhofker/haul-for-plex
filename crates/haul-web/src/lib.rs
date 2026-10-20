@@ -15,7 +15,8 @@ pub use state::Settings;
 /// Serve the web interface on `bind` until interrupted.
 pub async fn serve(bind: SocketAddr, settings: Settings) -> anyhow::Result<()> {
     let open = settings.password.is_none() && !bind.ip().is_loopback();
-    let app = router(settings);
+    let state = state::AppState::new(settings);
+    let app = routes::router_for(state.clone());
     let listener = tokio::net::TcpListener::bind(bind).await?;
     println!(
         "Haul for Plex web interface listening on http://{}",
@@ -29,9 +30,32 @@ pub async fn serve(bind: SocketAddr, settings: Settings) -> anyhow::Result<()> {
         );
     }
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
+    // Stop downloads cleanly and save the queue; they resume on next start.
+    state.downloads().shutdown().await;
     Ok(())
+}
+
+/// Ctrl-C, or SIGTERM (as sent by `docker stop`).
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

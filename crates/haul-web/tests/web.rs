@@ -133,6 +133,7 @@ async fn env(logged_in: bool, password: Option<&str>) -> Env {
         password: password.map(String::from),
         parallel: 2,
         plextv_url: Some(format!("{}/", plextv.uri())),
+        retry: Settings::DEFAULT_RETRY,
     });
     Env {
         app,
@@ -545,4 +546,47 @@ async fn search_results_can_be_narrowed_by_type_and_sorted() {
     let movie = r.body.find("Some Movie (1999)").unwrap();
     let pilot = r.body.find("Pilot").unwrap();
     assert!(pilot < movie, "by title, Pilot comes before Some Movie");
+}
+
+#[tokio::test]
+async fn queue_is_saved_and_jobs_can_be_paused_and_resumed() {
+    let env = env(true, None).await;
+    // The file hangs, so the job stays in progress.
+    Mock::given(method("GET"))
+        .and(path("/library/parts/7/1/file.mkv"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(FILE)
+                .set_delay(Duration::from_secs(30)),
+        )
+        .with_priority(1)
+        .mount(&env.pms)
+        .await;
+    post(&env.app, &format!("/servers/{SERVER_ID}/items/10/download")).await;
+    let r = get(&env.app, "/downloads/list").await;
+    assert!(r.body.contains("/downloads/1/pause"), "{}", r.body);
+    assert!(r.body.contains("Pause all"));
+
+    let r = post(&env.app, "/downloads/1/pause").await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let r = get(&env.app, "/downloads/list").await;
+    assert!(r.body.contains("Paused"));
+    assert!(r.body.contains("/downloads/1/resume"));
+    assert!(r.body.contains("Resume all"));
+
+    let queue = env.store.path().with_file_name("queue.json");
+    let saved: Value = serde_json::from_slice(&std::fs::read(&queue).unwrap()).unwrap();
+    assert_eq!(saved["jobs"][0]["state"], "paused");
+    assert_eq!(saved["jobs"][0]["server_id"], SERVER_ID);
+    assert_eq!(saved["jobs"][0]["item"], "10");
+
+    let req = Request::post("/downloads/resume")
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "http://localhost:8080")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("server={SERVER_ID}")))
+        .unwrap();
+    assert_eq!(send(&env.app, req).await.status, StatusCode::SEE_OTHER);
+    let saved: Value = serde_json::from_slice(&std::fs::read(&queue).unwrap()).unwrap();
+    assert_eq!(saved["jobs"][0]["state"], "queued");
 }

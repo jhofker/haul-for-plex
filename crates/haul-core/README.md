@@ -49,6 +49,8 @@ What's in it:
 - `library`, `listing`: libraries, items, search, filtering and sorting
 - `download`: planning files (movies, episodes, seasons, whole shows),
   choosing between versions, and resumable downloads
+- `retry`: retrying a download with backoff when the server drops
+  (`Error::is_retryable` tells temporary failures from permanent ones)
 - `naming`: Plex/Jellyfin-style paths, safe on Windows
 - `config`: the sign-in token and settings file
 
